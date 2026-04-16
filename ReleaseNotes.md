@@ -1,3 +1,6 @@
+New in 1.8.1
+- Restart on import without manual intervention
+
 New in 1.8.0
 - Update key generation with separate features to set secrets and restart the apps
 - Fixed the stop behavior to correctly set the scaling to 0
