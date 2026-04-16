@@ -36,6 +36,11 @@ primary_region = "$REGION"
   handlers = ["tls", "http"]
   port = 443
 
+[[restart]]
+  policy = "on-failure"
+  retries = 10
+  processes = ["app"]
+
 
 
 [[vm]]
