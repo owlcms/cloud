@@ -6,7 +6,9 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 
 import org.apache.maven.artifact.versioning.ComparableVersion;
@@ -24,6 +26,11 @@ public class VersionInfo {
 	private String apiUrl;
 	final private static Logger logger = (Logger) LoggerFactory.getLogger(VersionInfo.class);
 	private Integer comparison;
+	
+	// Static cache to avoid repeated fetches for the same API URL (expires after 2 minutes)
+	private static final Map<String, String> versionCache = new HashMap<>();
+	private static final Map<String, Long> cacheTimestamps = new HashMap<>();
+	private static final long CACHE_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes (GitHub allows 60 requests/hour)
 
 	public VersionInfo(String currentVersionString) {
 		this(currentVersionString, "https://api.github.com/repos/owlcms/owlcms4/releases");
@@ -76,10 +83,11 @@ public class VersionInfo {
 			conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
 
 			if (conn.getResponseCode() != 200) {
-				throw new RuntimeException("Failed : HTTP error code : " + conn.getResponseCode());
-			}
+			logger.info("Failed to fetch /releases from {}, HTTP error code: {}", apiUrl, conn.getResponseCode());
+			return "unknown";
+		}
 
-			Scanner scanner = new Scanner(url.openStream());
+		Scanner scanner = new Scanner(url.openStream());
 			String inline = "";
 			while (scanner.hasNext()) {
 				inline += scanner.nextLine();
@@ -101,24 +109,30 @@ public class VersionInfo {
 			}
 
 			if (versions.isEmpty()) {
-				logger.error("No valid semantic versions found in releases from {}", apiUrl);
-				return "unknown (error)";
-			}
+			logger.debug("No valid semantic versions found in releases from {}", apiUrl);
+			return "unknown";
+		}
 
-			Collections.sort(versions, Comparator.reverseOrder());
-			logger.info("fullFetchLatestReleaseVersion took {} ms for {} valid versions", System.currentTimeMillis() - now, versions.size());
-			return versions.get(0).getValue();
+		Collections.sort(versions, Comparator.reverseOrder());
+		logger.info("fullFetchLatestReleaseVersion took {} ms for {} valid versions", System.currentTimeMillis() - now, versions.size());
+		return versions.get(0).getValue();
 
-		} catch (IOException e) {
-			logger.error("Error fetching latest release version from {}", apiUrl, e);
-			return "unknown (error)";
-		} catch (Exception e) {
-			logger.error("Unexpected error fetching latest release version from {}", apiUrl, e);
-			return "unknown (error)";
+	} catch (IOException e) {
+		logger.debug("Error fetching latest release version from {}: {}", apiUrl, e.getMessage());
+		return "unknown";
+	} catch (Exception e) {
+		logger.debug("Unexpected error fetching latest release version from {}: {}", apiUrl, e.getMessage());
+		return "unknown";
 		}
 	}
 
 	public static String fastFetchLatestReleaseVersion(String apiUrl) {
+		// Check cache first (with expiry)
+		Long cachedTime = cacheTimestamps.get(apiUrl);
+		if (cachedTime != null && (System.currentTimeMillis() - cachedTime) < CACHE_EXPIRY_MS) {
+			return versionCache.get(apiUrl);
+		}
+		
 		long now = System.currentTimeMillis();
 		try {
 			URL url = new URL(apiUrl + "/latest");
@@ -128,7 +142,10 @@ public class VersionInfo {
 
 			if (conn.getResponseCode() != 200) {
 				logger.debug("Failed to fetch /latest from {}, falling back to fullFetchLatestReleaseVersion", apiUrl);
-				return fullFetchLatestReleaseVersion(apiUrl);
+				String result = fullFetchLatestReleaseVersion(apiUrl);
+				versionCache.put(apiUrl, result);
+				cacheTimestamps.put(apiUrl, System.currentTimeMillis());
+				return result;
 			}
 
 			Scanner scanner = new Scanner(url.openStream());
@@ -143,14 +160,22 @@ public class VersionInfo {
 			String latestVersion = release.get("tag_name").getAsString();
 
 			logger.info("fastFetchLatestReleaseVersion took {} ms", System.currentTimeMillis() - now);
+			versionCache.put(apiUrl, latestVersion);
+			cacheTimestamps.put(apiUrl, System.currentTimeMillis());
 			return latestVersion;
 
 		} catch (IOException e) {
 			logger.debug("Error fetching /latest from {}, falling back to fullFetchLatestReleaseVersion: {}", apiUrl, e.getMessage());
-			return fullFetchLatestReleaseVersion(apiUrl);
+			String result = fullFetchLatestReleaseVersion(apiUrl);
+			versionCache.put(apiUrl, result);
+			cacheTimestamps.put(apiUrl, System.currentTimeMillis());
+			return result;
 		} catch (Exception e) {
 			logger.debug("Unexpected error fetching /latest from {}, falling back to fullFetchLatestReleaseVersion: {}", apiUrl, e.getMessage());
-			return fullFetchLatestReleaseVersion(apiUrl);
+			String result = fullFetchLatestReleaseVersion(apiUrl);
+			versionCache.put(apiUrl, result);
+			cacheTimestamps.put(apiUrl, System.currentTimeMillis());
+			return result;
 		}
 	}
 }

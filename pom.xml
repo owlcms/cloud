@@ -6,15 +6,15 @@
 	<groupId>app.owlcms</groupId>
 	<artifactId>fly-manager</artifactId>
 	<name>owlcms fly.io cloud management</name>
-	<version>1.0.0</version>
+	<version>${revision}</version>
 	<packaging>jar</packaging>
 
 	<properties>
-		<maven.compiler.source>17</maven.compiler.source>
-		<maven.compiler.target>17</maven.compiler.target>
+		<revision>1.0.0</revision>
+		<maven.compiler.release>17</maven.compiler.release>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-		<vaadin.version>24.3.3</vaadin.version>
+		<vaadin.version>24.9.7</vaadin.version>
 		<jetty.version>12.0.5</jetty.version>
 	</properties>
 
@@ -109,7 +109,7 @@
 		<dependency>
 			<groupId>com.maxmind.geoip2</groupId>
 			<artifactId>geoip2</artifactId>
-			<version>4.2.0</version>
+			<version>4.4.0</version>
 		</dependency>
 
 		<!-- version checking -->
@@ -129,7 +129,7 @@
 		<dependency>
 			<groupId>org.jetbrains</groupId>
 			<artifactId>annotations</artifactId>
-			<version>24.1.0</version>
+			<version>13.0</version>
 		</dependency>
 		<dependency>
 			<groupId>com.vaadin</groupId>
@@ -142,12 +142,6 @@
      <artifactId>gson</artifactId>
      <version>2.8.5</version>
    </dependency>
- 
-   <dependency>
-     <groupId>com.google.code.gson</groupId>
-     <artifactId>gson</artifactId>
-     <version>2.8.5</version>
-   </dependency>
 
 	<dependency>
 		<groupId>com.vdurmont</groupId>
@@ -155,6 +149,52 @@
 		<version>3.1.0</version>
 	</dependency>
 
+	<dependency>
+		<groupId>org.apache.commons</groupId>
+		<artifactId>commons-lang3</artifactId>
+		<version>3.17.0</version>
+	</dependency>
+
+	<dependency>
+		<groupId>commons-io</groupId>
+		<artifactId>commons-io</artifactId>
+		<version>2.20.0</version>
+	</dependency>
+
+	<dependency>
+		<groupId>com.vaadin</groupId>
+		<artifactId>open</artifactId>
+		<version>8.5.0.5</version>
+	</dependency>
+	<dependency>
+		<groupId>com.fasterxml.jackson.core</groupId>
+		<artifactId>jackson-core</artifactId>
+		<version>2.19.1</version>
+	</dependency>
+
+	<dependency>
+		<groupId>com.fasterxml.jackson.core</groupId>
+		<artifactId>jackson-databind</artifactId>
+		<version>2.19.1</version>
+	</dependency>
+
+	<dependency>
+		<groupId>com.fasterxml.jackson.core</groupId>
+		<artifactId>jackson-annotations</artifactId>
+		<version>2.19.1</version>
+	</dependency>
+
+	<dependency>
+		<groupId>com.fasterxml.jackson.datatype</groupId>
+		<artifactId>jackson-datatype-jsr310</artifactId>
+		<version>2.19.1</version>
+	</dependency>
+
+	<dependency>
+		<groupId>org.ow2.asm</groupId>
+		<artifactId>asm</artifactId>
+		<version>9.8</version>
+	</dependency>
 </dependencies>
 
 	<build>
