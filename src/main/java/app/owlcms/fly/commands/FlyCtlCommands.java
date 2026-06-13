@@ -56,9 +56,14 @@ public class FlyCtlCommands {
 	public void appDeploy(App app, Runnable callback) {
 		String referenceVersion = app.getReferenceVersion();
 		String configFile = app.appType.getConfigFile();
+		// Strictly enforce a SINGLE machine: --ha=false prevents Fly from
+		// auto-creating a second (HA) machine on a fresh launch, and the chained
+		// `scale count 1` clamps any app that has already drifted to 2+ machines
+		// back down to exactly one. The in-memory hub requires a single instance.
 		doAppCommand(app,
 				"fly deploy --app " + app.name + " --image " + app.appType.image + ":" + referenceVersion
-						+ " --ha=false --config " + configFile,
+						+ " --ha=false --config " + configFile
+						+ " && " + scaleToOne(app),
 				callback, null);
 	}
 
@@ -89,13 +94,24 @@ public class FlyCtlCommands {
 		// Get the current machine ID (may have changed since page load)
 		String machineId = getCurrentMachineId(app.name);
 		
-		// If we have a machine ID, restart the machine directly
-		// Otherwise scale up (for suspended/stopped apps with no machines)
+		// If we have a machine ID, restart the machine directly, then clamp to a
+		// single machine in case the app has drifted to 2+ (HA) machines.
+		// Otherwise scale up to exactly one (for suspended/stopped apps).
 		if (machineId != null && !machineId.isEmpty()) {
-			doAppCommand(app, "fly machine restart " + machineId + " --app " + app.name, null, ui);
+			doAppCommand(app, "fly machine restart " + machineId + " --app " + app.name
+					+ " && " + scaleToOne(app), null, ui);
 		} else {
-			doAppCommand(app, "fly scale count 1 --yes --app " + app.name, null, ui);
+			doAppCommand(app, scaleToOne(app), null, ui);
 		}
+	}
+
+	/**
+	 * Command fragment that strictly clamps an app to exactly one machine.
+	 * Used on every path that runs the app so it can never run as 2+ (HA)
+	 * machines. Stopping the app (scale count 0) is a separate, allowed state.
+	 */
+	private String scaleToOne(App app) {
+		return "fly scale count 1 --yes --app " + app.name;
 	}
 
 	/**

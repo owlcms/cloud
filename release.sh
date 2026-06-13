@@ -7,7 +7,7 @@ if gh release view $VERSION --repo owlcms/owlcms-cloud &>/dev/null; then
     exit 1
 fi
 
-if ! fly deploy . --local-only --app owlcms-cloud --config owlcms-cloud.toml --ha=false --image-label $VERSION --build-arg VERSION=$VERSION; then
+if ! fly deploy . --app owlcms-cloud --config owlcms-cloud.toml --ha=false --image-label $VERSION --build-arg VERSION=$VERSION; then
     echo "Error: fly deploy failed. GitHub release was not created."
     exit 1
 fi

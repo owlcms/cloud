@@ -32,4 +32,6 @@ flyctl secrets set \
 
 # now that we have the secrets, launch
 flyctl deploy --ha=false --config $tmpfile
+# Strictly enforce a single application machine.
+flyctl scale count 1 --yes --app "$FLY_APP"
 rm -f $tmpfile
