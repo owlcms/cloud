@@ -77,6 +77,7 @@ public class VersionInfo {
 	public static String fullFetchLatestReleaseVersion(String apiUrl) {
 		long now = System.currentTimeMillis();
 		try {
+			@SuppressWarnings("deprecation")
 			URL url = new URL(apiUrl);
 			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 			conn.setRequestMethod("GET");
@@ -135,6 +136,7 @@ public class VersionInfo {
 		
 		long now = System.currentTimeMillis();
 		try {
+			@SuppressWarnings("deprecation")
 			URL url = new URL(apiUrl + "/latest");
 			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 			conn.setRequestMethod("GET");

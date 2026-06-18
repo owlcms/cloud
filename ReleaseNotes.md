@@ -1,3 +1,6 @@
+New in 1.8.2
+- stricter enforcement of 1 machine limit for tracker (--ha=false)
+
 New in 1.8.1
 - Restart on import without manual intervention
 
