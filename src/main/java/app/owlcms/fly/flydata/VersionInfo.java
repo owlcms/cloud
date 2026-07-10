@@ -6,10 +6,9 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Scanner;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.maven.artifact.versioning.ComparableVersion;
 import org.slf4j.LoggerFactory;
@@ -28,9 +27,13 @@ public class VersionInfo {
 	private Integer comparison;
 	
 	// Static cache to avoid repeated fetches for the same API URL (expires after 2 minutes)
-	private static final Map<String, String> versionCache = new HashMap<>();
-	private static final Map<String, Long> cacheTimestamps = new HashMap<>();
+	private static final ConcurrentHashMap<String, String> versionCache = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, Long> cacheTimestamps = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, Boolean> inFlightFetches = new ConcurrentHashMap<>();
 	private static final long CACHE_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes (GitHub allows 60 requests/hour)
+	private static final int FETCH_ATTEMPTS = 2;
+	private static final int FETCH_TIMEOUT_MS = 5000;
+	private static final long RETRY_DELAY_MS = 500;
 
 	public VersionInfo(String currentVersionString) {
 		this(currentVersionString, "https://api.github.com/repos/owlcms/owlcms4/releases");
@@ -80,6 +83,8 @@ public class VersionInfo {
 			@SuppressWarnings("deprecation")
 			URL url = new URL(apiUrl);
 			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+			conn.setConnectTimeout(FETCH_TIMEOUT_MS);
+			conn.setReadTimeout(FETCH_TIMEOUT_MS);
 			conn.setRequestMethod("GET");
 			conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
 
@@ -88,7 +93,7 @@ public class VersionInfo {
 			return "unknown";
 		}
 
-		Scanner scanner = new Scanner(url.openStream());
+		Scanner scanner = new Scanner(conn.getInputStream());
 			String inline = "";
 			while (scanner.hasNext()) {
 				inline += scanner.nextLine();
@@ -128,56 +133,74 @@ public class VersionInfo {
 	}
 
 	public static String fastFetchLatestReleaseVersion(String apiUrl) {
-		// Check cache first (with expiry)
 		Long cachedTime = cacheTimestamps.get(apiUrl);
 		if (cachedTime != null && (System.currentTimeMillis() - cachedTime) < CACHE_EXPIRY_MS) {
 			return versionCache.get(apiUrl);
 		}
-		
-		long now = System.currentTimeMillis();
+
+		if (inFlightFetches.putIfAbsent(apiUrl, Boolean.TRUE) != null) {
+			String cachedVersion = versionCache.get(apiUrl);
+			if (cachedVersion != null) {
+				logger.debug("Version fetch already in progress for {}, returning cached version {}", apiUrl,
+						cachedVersion);
+				return cachedVersion;
+			}
+			logger.debug("Version fetch already in progress for {}, returning unknown", apiUrl);
+			return "unknown";
+		}
+
 		try {
-			@SuppressWarnings("deprecation")
-			URL url = new URL(apiUrl + "/latest");
-			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-			conn.setRequestMethod("GET");
-			conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
+			long now = System.currentTimeMillis();
+			for (int attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
+				try {
+					@SuppressWarnings("deprecation")
+					URL url = new URL(apiUrl + "/latest");
+					HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+					conn.setConnectTimeout(FETCH_TIMEOUT_MS);
+					conn.setReadTimeout(FETCH_TIMEOUT_MS);
+					conn.setRequestMethod("GET");
+					conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
 
-			if (conn.getResponseCode() != 200) {
-				logger.debug("Failed to fetch /latest from {}, falling back to fullFetchLatestReleaseVersion", apiUrl);
-				String result = fullFetchLatestReleaseVersion(apiUrl);
-				versionCache.put(apiUrl, result);
-				cacheTimestamps.put(apiUrl, System.currentTimeMillis());
-				return result;
+					if (conn.getResponseCode() != 200) {
+						logger.debug("Attempt {}/{} to fetch /latest from {} returned HTTP {}", attempt,
+								FETCH_ATTEMPTS, apiUrl, conn.getResponseCode());
+						continue;
+					}
+
+					Scanner scanner = new Scanner(conn.getInputStream());
+					String inline = "";
+					while (scanner.hasNext()) {
+						inline += scanner.nextLine();
+					}
+					scanner.close();
+
+					JsonParser parser = new JsonParser();
+					JsonObject release = parser.parse(inline).getAsJsonObject();
+					String latestVersion = release.get("tag_name").getAsString();
+
+					logger.info("fastFetchLatestReleaseVersion took {} ms", System.currentTimeMillis() - now);
+					versionCache.put(apiUrl, latestVersion);
+					cacheTimestamps.put(apiUrl, System.currentTimeMillis());
+					return latestVersion;
+				} catch (Exception e) {
+					logger.debug("Attempt {}/{} to fetch /latest from {} failed: {}", attempt,
+							FETCH_ATTEMPTS, apiUrl, e.getMessage());
+				}
+
+				if (attempt < FETCH_ATTEMPTS) {
+					try {
+						Thread.sleep(RETRY_DELAY_MS * attempt);
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+						return "unknown";
+					}
+				}
 			}
 
-			Scanner scanner = new Scanner(url.openStream());
-			String inline = "";
-			while (scanner.hasNext()) {
-				inline += scanner.nextLine();
-			}
-			scanner.close();
-
-			JsonParser parser = new JsonParser();
-			JsonObject release = parser.parse(inline).getAsJsonObject();
-			String latestVersion = release.get("tag_name").getAsString();
-
-			logger.info("fastFetchLatestReleaseVersion took {} ms", System.currentTimeMillis() - now);
-			versionCache.put(apiUrl, latestVersion);
-			cacheTimestamps.put(apiUrl, System.currentTimeMillis());
-			return latestVersion;
-
-		} catch (IOException e) {
-			logger.debug("Error fetching /latest from {}, falling back to fullFetchLatestReleaseVersion: {}", apiUrl, e.getMessage());
-			String result = fullFetchLatestReleaseVersion(apiUrl);
-			versionCache.put(apiUrl, result);
-			cacheTimestamps.put(apiUrl, System.currentTimeMillis());
-			return result;
-		} catch (Exception e) {
-			logger.debug("Unexpected error fetching /latest from {}, falling back to fullFetchLatestReleaseVersion: {}", apiUrl, e.getMessage());
-			String result = fullFetchLatestReleaseVersion(apiUrl);
-			versionCache.put(apiUrl, result);
-			cacheTimestamps.put(apiUrl, System.currentTimeMillis());
-			return result;
+			logger.debug("No version found after {} attempts for {}, returning unknown", FETCH_ATTEMPTS, apiUrl);
+			return "unknown";
+		} finally {
+			inFlightFetches.remove(apiUrl);
 		}
 	}
 }
