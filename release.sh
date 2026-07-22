@@ -1,5 +1,5 @@
 #!/bin/bash -
-VERSION=1.8.2
+VERSION=1.8.3
 
 # Check if release already exists
 if gh release view $VERSION --repo owlcms/owlcms-cloud &>/dev/null; then

@@ -1,3 +1,6 @@
+New in 1.8.3
+- Available version number fetch retries -- initial fetch from github occasionally fails
+
 New in 1.8.2
 - stricter enforcement of 1 machine limit for tracker (--ha=false)
 
