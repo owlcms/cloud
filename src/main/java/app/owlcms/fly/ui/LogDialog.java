@@ -3,6 +3,7 @@ package app.owlcms.fly.ui;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.vaadin.flow.component.ModalityMode;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -20,7 +21,7 @@ public class LogDialog extends Dialog {
     private Button clearButton;
 
     public LogDialog() {
-        this.setModal(false);
+        this.setModality(ModalityMode.MODELESS);
         this.setDraggable(true);
         this.setResizable(true);
         this.setWidth("80vw");

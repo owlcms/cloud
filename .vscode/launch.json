@@ -11,7 +11,7 @@
             "mainClass": "app.owlcms.fly.Main",
             "vmArgs": "-Dserver.port=8084 -XX:+AllowEnhancedClassRedefinition -XX:HotswapAgent=fatjar",
             "projectName": "fly-manager",
-            "console": "internalConsole"
+            "console": "integratedTerminal"
         },
         {
             "type": "java",

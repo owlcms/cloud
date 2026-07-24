@@ -341,7 +341,9 @@ public class VaadinBoot {
             // com.vaadin.flow.server.startup.ServletContextListeners.
             // See also https://mvysny.github.io/vaadin-lookup-vs-instantiator/
             // Jetty documentation: https://www.eclipse.org/jetty/documentation/jetty-12/operations-guide/index.html#og-annotations-scanning
-            String pattern = ".*\\.jar|.*/classes/.*";
+            // Jackson 3 (pulled transitively by Vaadin 25) ships Java 23 multi-release classes that the
+            // Jetty ee10 ASM scanner cannot parse; exclude jackson jars from scanning (no web annotations).
+            String pattern = "(?!.*jackson).*\\.jar|.*/classes/.*";
             if (isScanTestClasspath) {
                 pattern += "|.*/test-classes/.*";
             }

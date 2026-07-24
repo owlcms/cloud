@@ -11,11 +11,15 @@
 
 	<properties>
 		<revision>1.0.0</revision>
-		<maven.compiler.release>17</maven.compiler.release>
+		<maven.compiler.release>25</maven.compiler.release>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-		<vaadin.version>24.9.7</vaadin.version>
+		<vaadin.version>25.2.3</vaadin.version>
 		<jetty.version>12.0.5</jetty.version>
+		<!-- ASM must support the Java 25 bytecode we compile to, so the Jetty
+		     annotation scanner (jetty-ee10-annotations) can parse our classes.
+		     Jetty 12.0.x bundles an older ASM; force 9.8 which supports major 69. -->
+		<asm.version>9.8</asm.version>
 	</properties>
 
 	<repositories>
@@ -81,6 +85,28 @@
 				<scope>import</scope>
 				<version>${vaadin.version}</version>
 			</dependency>
+			<!-- Force ASM 9.8 so Jetty's annotation scanner can read Java 25 (major 69)
+			     bytecode. asm-commons pulls asm-tree/asm-analysis transitively. -->
+			<dependency>
+				<groupId>org.ow2.asm</groupId>
+				<artifactId>asm</artifactId>
+				<version>${asm.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.ow2.asm</groupId>
+				<artifactId>asm-commons</artifactId>
+				<version>${asm.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.ow2.asm</groupId>
+				<artifactId>asm-tree</artifactId>
+				<version>${asm.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.ow2.asm</groupId>
+				<artifactId>asm-analysis</artifactId>
+				<version>${asm.version}</version>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 
@@ -89,6 +115,12 @@
 			<groupId>com.vaadin</groupId>
 			<!-- Replace artifactId with vaadin-core to use only free components -->
 			<artifactId>vaadin</artifactId>
+		</dependency>
+		<!-- Vaadin 25 vaadin/vaadin-core no longer transitively pulls the dev bundle/server.
+		     Needed for dev mode; the production profile's shade plugin excludes it. -->
+		<dependency>
+			<groupId>com.vaadin</groupId>
+			<artifactId>vaadin-dev</artifactId>
 		</dependency>
 		<!--
 		https://mvnrepository.com/artifact/org.eclipse.jetty.ee10.websocket/jetty-ee10-websocket-jakarta-server -->
@@ -122,7 +154,7 @@
 		<dependency>
 			<groupId>ch.qos.logback</groupId>
 			<artifactId>logback-classic</artifactId>
-			<version>1.4.14</version>
+			<version>1.5.35</version>
 		</dependency>
 
 		<!-- https://mvnrepository.com/artifact/org.jetbrains/annotations -->
@@ -165,29 +197,6 @@
 		<groupId>com.vaadin</groupId>
 		<artifactId>open</artifactId>
 		<version>8.5.0.5</version>
-	</dependency>
-	<dependency>
-		<groupId>com.fasterxml.jackson.core</groupId>
-		<artifactId>jackson-core</artifactId>
-		<version>2.19.1</version>
-	</dependency>
-
-	<dependency>
-		<groupId>com.fasterxml.jackson.core</groupId>
-		<artifactId>jackson-databind</artifactId>
-		<version>2.19.1</version>
-	</dependency>
-
-	<dependency>
-		<groupId>com.fasterxml.jackson.core</groupId>
-		<artifactId>jackson-annotations</artifactId>
-		<version>2.19.1</version>
-	</dependency>
-
-	<dependency>
-		<groupId>com.fasterxml.jackson.datatype</groupId>
-		<artifactId>jackson-datatype-jsr310</artifactId>
-		<version>2.19.1</version>
 	</dependency>
 
 	<dependency>

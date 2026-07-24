@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #Stage 1
 # initialize build and set base image for first stage
-FROM maven:3.8.8-eclipse-temurin-17 AS stage1
+FROM maven:3.9-eclipse-temurin-25 AS stage1
 # speed up Maven JVM a bit
 ENV MAVEN_OPTS="-XX:+TieredCompilation -XX:TieredStopAtLevel=1"
 ENV DEBIAN_FRONTEND=noninteractive
@@ -23,7 +23,7 @@ ARG VERSION=1.0.0
 # compile the source code and package it in a jar file
 RUN mvn clean package -P production -Dmaven.test.skip=true -Drevision=${VERSION}
 
-FROM eclipse-temurin:17-jdk-jammy
+FROM eclipse-temurin:25-jdk-jammy
 WORKDIR /app
 ENV FLYCTL_INSTALL=/app/fly
 # put required utilities in /app/fly/bin

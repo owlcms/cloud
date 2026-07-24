@@ -2,6 +2,7 @@ package app.owlcms.fly.flydata;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -80,8 +81,7 @@ public class VersionInfo {
 	public static String fullFetchLatestReleaseVersion(String apiUrl) {
 		long now = System.currentTimeMillis();
 		try {
-			@SuppressWarnings("deprecation")
-			URL url = new URL(apiUrl);
+			URL url = URI.create(apiUrl).toURL();
 			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 			conn.setConnectTimeout(FETCH_TIMEOUT_MS);
 			conn.setReadTimeout(FETCH_TIMEOUT_MS);

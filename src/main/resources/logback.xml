@@ -49,7 +49,6 @@
         <appender-ref ref="FILE" />
         <appender-ref ref="CONSOLE" />
     </root>
->
 
     <!-- default levels for owlcms -->
     <logger name="app.owlcms" level="INFO" />
