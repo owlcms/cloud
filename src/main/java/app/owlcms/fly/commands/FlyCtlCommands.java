@@ -363,6 +363,29 @@ public class FlyCtlCommands {
 							}
 						};
 							runCommand("setting secret {}", vdCommand, vdOut, vdErr, true, null);
+						} else if (!connectOwlcmsToTracker) {
+							hostNameStatus = 0;
+							String unsetVideoDataCommand = "fly secrets unset OWLCMS_VIDEODATA --stage --app " + app.name;
+							Consumer<String> unsetVideoDataOut = (string) -> {
+								if (!string.contains("Deploy or update")) {
+									if (logDialog != null) {
+										logDialog.append(string, ui);
+									} else if (execArea != null) {
+										execArea.append(string, ui);
+									}
+								}
+							};
+							Consumer<String> unsetVideoDataErr = (string) -> {
+								stagingFailed[0] = true;
+								hostNameStatus = -1;
+								if (logDialog != null) {
+									logDialog.appendError(string, ui);
+								} else if (execArea != null) {
+									execArea.appendError(string, ui);
+								}
+							};
+							runCommand("removing Tracker connection {}", unsetVideoDataCommand, unsetVideoDataOut,
+									unsetVideoDataErr, true, null);
 						}
 					} catch (Exception e) {
 						stagingFailed[0] = true;
