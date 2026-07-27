@@ -105,6 +105,10 @@ public class FlyCtlCommands {
 		}
 	}
 
+	private void deployStagedSecrets(App app, UI ui) {
+		doAppCommand(app, "fly secrets deploy --app " + app.name, null, ui);
+	}
+
 	/**
 	 * Command fragment that strictly clamps an app to exactly one machine.
 	 * Used on every path that runs the app so it can never run as 2+ (HA)
@@ -246,7 +250,7 @@ public class FlyCtlCommands {
 		}
 	}
 
-	public void doSetSharedKey(String value) {
+	public void doSetSharedKey(String value, boolean connectOwlcmsToTracker, Runnable afterSecretsStaged) {
 		UI ui = UI.getCurrent();
 		if (logDialog != null) {
 			ui.access(() -> logDialog.show());
@@ -254,6 +258,7 @@ public class FlyCtlCommands {
 			execArea.setVisible(true);
 		}
 		new Thread(() -> {
+			final boolean[] stagingFailed = {false};
 			if (logDialog != null) {
 				logDialog.clear(ui);
 			} else if (execArea != null) {
@@ -270,7 +275,7 @@ public class FlyCtlCommands {
 					Consumer<String> outputConsumer = (string) -> {
 						// Filter and rephrase Fly.io verbose messages
 						if (string.contains("Secrets have been staged")) {
-							String msg = "Secrets staged on " + app.name + ". Will be applied on restart.";
+							String msg = "Secrets staged on " + app.name + ". Confirm deployment to apply them.";
 							if (logDialog != null) {
 								logDialog.append(msg, ui);
 							} else if (execArea != null) {
@@ -285,6 +290,7 @@ public class FlyCtlCommands {
 						}
 					};
 					Consumer<String> errorConsumer = (string) -> {
+						stagingFailed[0] = true;
 						hostNameStatus = -1;
 						if (logDialog != null) {
 							logDialog.appendError(string, ui);
@@ -294,6 +300,7 @@ public class FlyCtlCommands {
 					};
 					runCommand("setting secret {}", commandString, outputConsumer, errorConsumer, true, null);
 				} catch (Exception e) {
+					stagingFailed[0] = true;
 					e.printStackTrace();
 				}
 
@@ -316,6 +323,7 @@ public class FlyCtlCommands {
 								}
 							};
 							Consumer<String> errorConsumer = (string) -> {
+								stagingFailed[0] = true;
 								hostNameStatus = -1;
 								if (logDialog != null) {
 									logDialog.appendError(string, ui);
@@ -328,12 +336,13 @@ public class FlyCtlCommands {
 							// Don't log skipping PUBLICRESULTS - it's expected if not configured
 						}
 
-						// if TRACKER exists, set OWLCMS_VIDEODATA to wss://{tracker}.fly.dev/ws
+						// When selected, configure the Tracker URL and its matching authentication key.
 						App tracker = appMap.get(AppType.TRACKER);
-						if (tracker != null && tracker.name != null && !tracker.name.isBlank()) {
+						if (connectOwlcmsToTracker && tracker != null && tracker.name != null && !tracker.name.isBlank()) {
 							String wssUrl = "wss://" + tracker.name + ".fly.dev/ws";
 							hostNameStatus = 0;
-							String vdCommand = "fly secrets set OWLCMS_VIDEODATA='" + wssUrl + "' --stage --app " + app.name;
+							String vdCommand = "fly secrets set OWLCMS_VIDEODATA='" + wssUrl
+									+ "' OWLCMS_VIDEODATAKEY='" + value + "' --stage --app " + app.name;
 						Consumer<String> vdOut = (string) -> {
 							// Filter verbose Fly.io messages
 							if (!string.contains("Secrets have been staged") && !string.contains("Deploy or update")) {
@@ -345,6 +354,7 @@ public class FlyCtlCommands {
 							}
 						};
 						Consumer<String> vdErr = (string) -> {
+							stagingFailed[0] = true;
 							hostNameStatus = -1;
 							if (logDialog != null) {
 								logDialog.appendError(string, ui);
@@ -355,9 +365,13 @@ public class FlyCtlCommands {
 							runCommand("setting secret {}", vdCommand, vdOut, vdErr, true, null);
 						}
 					} catch (Exception e) {
+						stagingFailed[0] = true;
 						e.printStackTrace();
 					}
 				}
+			}
+			if (!stagingFailed[0] && afterSecretsStaged != null) {
+				ui.access(() -> afterSecretsStaged.run());
 			}
 			try {
 				Thread.sleep(5000);
@@ -370,7 +384,7 @@ public class FlyCtlCommands {
 		}).start();
 	}
 
-	public void restartAllApps() {
+	public void deployStagedSecretsForAllApps() {
 		UI ui = UI.getCurrent();
 		if (logDialog != null) {
 			ui.access(() -> logDialog.show());
@@ -380,10 +394,10 @@ public class FlyCtlCommands {
 		new Thread(() -> {
 			if (logDialog != null) {
 				logDialog.clear(ui);
-				logDialog.append("Restarting applications to apply secrets...", ui);
+				logDialog.append("Deploying staged secrets. Applications will restart...", ui);
 			} else if (execArea != null) {
 				execArea.clear(ui);
-				execArea.append("Restarting applications to apply secrets...", ui);
+				execArea.append("Deploying staged secrets. Applications will restart...", ui);
 			}
 			
 			for (App app : appMap.values()) {
@@ -391,13 +405,9 @@ public class FlyCtlCommands {
 					continue;
 				}
 				if (logDialog != null) {
-					if (app.stopped) {
-						logDialog.append("Starting " + app.name + "...", ui);
-					} else {
-						logDialog.append("Restarting " + app.name + "...", ui);
-					}
+					logDialog.append("Deploying staged secrets to " + app.name + "...", ui);
 				}
-				appRestart(app, ui);
+				deployStagedSecrets(app, ui);
 			}
 			
 			try {

@@ -11,6 +11,8 @@ import com.vaadin.flow.component.Html;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
+
+import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.html.Anchor;
@@ -47,6 +49,7 @@ import jakarta.servlet.http.HttpServletRequest;
 public class AppsView extends VerticalLayout {
 
 	private static final String LEFT_LABEL_WIDTH = "14em";
+	private static final boolean SHOW_PUBLICRESULTS = false;
 	private long lastClick = 0;
 	@SuppressWarnings("unused")
 	final private Logger logger = LoggerFactory.getLogger(AppsView.class);
@@ -368,12 +371,6 @@ public class AppsView extends VerticalLayout {
 					<ul style="line-height: 1.4; width: 45em; margin: 0; padding-left: 1em;">
 						<li>When running in the cloud, TRACKER is used to show scoreboards to anyone on the internet.
 						<li><u>You don't need TRACKER in the cloud if you don't want remote scoreboards.</u>
-						<li><b>Note: TRACKER requires OWLCMS version 64 or later</b></li>
-						<li>To use TRACKER, you need to provide websocket connection URLs in OWLCMS</li>
-						<ul>
-							<li>Go to the Languages and System Settings page in OWLCMS and select the Connections tab.</li>
-							<li>If your tracker application is called <i>live-results</i>, the public results format is<br> <a href="">wss://<i>live-results</i>.fly.dev/ws</a></li>
-						</ul>
 						<li>The Shared Key set at the bottom of this page protects the communications between OWLCMS and TRACKER.
 					</ul>
 				""";
@@ -472,11 +469,16 @@ public class AppsView extends VerticalLayout {
 		hl.getStyle().set("margin-top", "1em");
 		Anchor a = new Anchor("https://" + app.name + ".fly.dev", app.name + ".fly.dev", AnchorTarget.BLANK);
 		a.getStyle().set("text-decoration", "underline");
+		String websocketUrl = "wss://" + app.name + ".fly.dev/ws";
 		String rawVersion = app.getCurrentVersion();
 		String displayVersion = rawVersion + (rawVersion.matches("^[0-9].*$") ? "" : " (version number unknown)");
 		String latestVersion = getLatestReleaseVersion(app.appType);
 		boolean updateRequired = app.isUpdateRequired();
-		VerticalLayout versionInfo = new VerticalLayout(a,
+		VerticalLayout versionInfo = new VerticalLayout(a);
+		if (app.appType == AppType.TRACKER) {
+			versionInfo.add(new NativeLabel("websocket: " + websocketUrl));
+		}
+		versionInfo.add(
 				new Html(
 						"""
 								<div>your version: %s<br />latest version: %s<span style="color:red">%s</span><br/> region: %s</div>
@@ -530,7 +532,7 @@ public class AppsView extends VerticalLayout {
 		}
 	}
 
-	private void showSharedKey(VerticalLayout apps) {
+	private void showSharedKey(VerticalLayout apps, boolean trackerConfigured) {
 		HorizontalLayout sharedKeySection = new HorizontalLayout();
 		sharedKeySection.setMargin(false);
 		sharedKeySection.setPadding(false);
@@ -551,19 +553,18 @@ public class AppsView extends VerticalLayout {
 		Html explanation = new Html(
 				"""
 						<ul style="line-height: 1.4; width: 45em; margin: 0; padding-left: 1em;">
-						<li>Set the shared key to protect communications from OWLCMS to the other applications.
-						<li>This is done once initially, and the same key is used for both PUBLICRESULTS and TRACKER.
-						<li>You can change it later, but you will need to restart the applications.
-						<li><u>If OWLCMS is running on a laptop</u>, copy the key to the Connections configuration in the OWLCMS settings.
+						<li>Set the shared key to protect communications between OWLCMS and TRACKER
+						<li>You can change it later; applying the secrets will deploy and restart the applications.
+						<li><u>If OWLCMS is running on a laptop</u>, copy the key to the Connections configuration in the OWLCMS settings, and use the websocket destination indicated in the Tracker section.
 						</ul>
 						""");
 		contentDiv.add(explanation);
 
-		// Controls row
+		// Key and connection controls
 		HorizontalLayout controlsLayout = new HorizontalLayout();
 		controlsLayout.setMargin(false);
 		controlsLayout.setPadding(false);
-		controlsLayout.setAlignItems(Alignment.CENTER);
+		controlsLayout.setAlignItems(Alignment.START);
 		controlsLayout.getStyle().set("margin-top", "1em");
 
 		TextField sharedKeyField = new TextField();
@@ -572,32 +573,57 @@ public class AppsView extends VerticalLayout {
 		sharedKeyField.setWidth("15em");
 		sharedKeyField.setValue("");
 
+		Checkbox connectOwlcmsToTracker = new Checkbox("Connect OWLCMS to Tracker");
+		connectOwlcmsToTracker.setVisible(trackerConfigured);
+
 		Button generateKeyButton = new Button("Generate Shared Key",
 				e -> {
 					sharedKeyField.setValue(generateRandomString(20));
 				});
 
-		Button setSecretsButton = new Button("Set Secrets",
+		Button setSecretsButton = new Button("Apply Key and Connection Settings",
 				e -> {
 					if (sharedKeyField.getValue() == null || sharedKeyField.getValue().isBlank()) {
 						sharedKeyField.setErrorMessage("The shared key cannot be empty");
 						sharedKeyField.setInvalid(true);
 					} else {
-						flyCommands.doSetSharedKey(sharedKeyField.getValue());
+						flyCommands.doSetSharedKey(sharedKeyField.getValue(), connectOwlcmsToTracker.getValue(),
+								this::confirmSecretsDeployment);
 					}
 				});
 
-		Button restartAppsButton = new Button("Restart Apps",
-				e -> {
-					flyCommands.restartAllApps();
-				});
+		HorizontalLayout generatorAndConnectionLayout = new HorizontalLayout(generateKeyButton, connectOwlcmsToTracker);
+		generatorAndConnectionLayout.setMargin(false);
+		generatorAndConnectionLayout.setPadding(false);
+		generatorAndConnectionLayout.setAlignItems(Alignment.CENTER);
 
-		controlsLayout.add(sharedKeyField, generateKeyButton, setSecretsButton, restartAppsButton);
+		HorizontalLayout actionLayout = new HorizontalLayout(setSecretsButton);
+		actionLayout.setMargin(false);
+		actionLayout.setPadding(false);
+		actionLayout.getStyle().set("margin-top", "0.5em");
+
+		VerticalLayout actionControls = new VerticalLayout(generatorAndConnectionLayout, actionLayout);
+		actionControls.setMargin(false);
+		actionControls.setPadding(false);
+		actionControls.setSpacing(false);
+
+		controlsLayout.add(sharedKeyField, actionControls);
 		contentDiv.add(controlsLayout);
 		sharedKeySection.add(contentDiv);
 
 		Div wrapper = new Div(sharedKeySection);
 		apps.add(wrapper);
+	}
+
+	private void confirmSecretsDeployment() {
+		ConfirmDialog confirmation = new ConfirmDialog();
+		confirmation.setHeader("Apply staged secrets?");
+		confirmation.setText("Applying the staged secrets will deploy and restart OWLCMS, Public Results, and Tracker.");
+		confirmation.setConfirmText("Apply Secrets");
+		confirmation.setCancelText("Cancel");
+		confirmation.setCancelable(true);
+		confirmation.addConfirmListener(e -> flyCommands.deployStagedSecretsForAllApps());
+		confirmation.open();
 	}
 
 	private void showApps(Map<AppType, App> appMap, VerticalLayout apps) {
@@ -636,22 +662,24 @@ public class AppsView extends VerticalLayout {
 			apps.add(showTrackerApp);
 		}
 
-		Div showPublicApp;
-		apps.add(new Hr());
+		if (SHOW_PUBLICRESULTS) {
+			Div showPublicApp;
+			apps.add(new Hr());
 
-		if (publicApp != null) {
-			showPublicApp = showApplication(publicApp);
-			apps.add(showPublicApp);
-		} else {
-			publicApp = new App("", AppType.PUBLICRESULTS, getCurrentRegion(), "stable", null, null);
-			publicApp.setVersionInfo(new VersionInfo("stable"));
-			showPublicApp = showApplication(publicApp);
-			apps.add(showPublicApp);
+			if (publicApp != null) {
+				showPublicApp = showApplication(publicApp);
+				apps.add(showPublicApp);
+			} else {
+				publicApp = new App("", AppType.PUBLICRESULTS, getCurrentRegion(), "stable", null, null);
+				publicApp.setVersionInfo(new VersionInfo("stable"));
+				showPublicApp = showApplication(publicApp);
+				apps.add(showPublicApp);
+			}
 		}
 
 		// Show shared key section after TRACKER
 		apps.add(new Hr());
-		showSharedKey(apps);
+		showSharedKey(apps, trackerApp != null);
 	}
 
 	private String getCurrentRegion() {
