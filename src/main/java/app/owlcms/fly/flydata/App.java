@@ -1,5 +1,8 @@
 package app.owlcms.fly.flydata;
 
+import java.util.HashSet;
+import java.util.Set;
+
 public class App implements Comparable<App> {
 
     // private static final Logger logger=LoggerFactory.getLogger(App.class);
@@ -8,6 +11,8 @@ public class App implements Comparable<App> {
     public boolean created;
     public String regionCode;
     private VersionInfo versionInfo;
+    private String deploymentVersion;
+    private final Set<String> secretNames = new HashSet<>();
     public boolean stopped;
     public String machine;
 
@@ -46,6 +51,26 @@ public class App implements Comparable<App> {
 
     public String getReferenceVersion() {
         return versionInfo.getReferenceVersionString();
+    }
+
+    public String getDeploymentVersion() {
+        return deploymentVersion == null ? getReferenceVersion() : deploymentVersion;
+    }
+
+    public void setDeploymentVersion(String deploymentVersion) {
+        this.deploymentVersion = deploymentVersion;
+    }
+
+    public void addSecretName(String secretName) {
+        secretNames.add(secretName);
+    }
+
+    public boolean hasSecretName(String secretName) {
+        return secretNames.contains(secretName);
+    }
+
+    public Set<String> getSecretNames() {
+        return Set.copyOf(secretNames);
     }
 
     public boolean isUpdateRequired() {

@@ -1,8 +1,8 @@
 package app.owlcms.fly.ui;
 
 import java.security.SecureRandom;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,7 +12,6 @@ import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 
-import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.html.Anchor;
@@ -49,6 +48,9 @@ import jakarta.servlet.http.HttpServletRequest;
 public class AppsView extends VerticalLayout {
 
 	private static final String LEFT_LABEL_WIDTH = "14em";
+	private static final String APP_DETAILS_WIDTH = "20em";
+	private static final String APP_CONTROLS_WIDTH = "42em";
+	private static final String CLOUD_OWLCMS_SELECTOR_WIDTH = "12em";
 	private static final boolean SHOW_PUBLICRESULTS = false;
 	private long lastClick = 0;
 	@SuppressWarnings("unused")
@@ -115,7 +117,7 @@ public class AppsView extends VerticalLayout {
 		return apps;
 	}
 
-	private ConfirmDialog buildDeletionDialog(App app, Runnable callback) {
+	private ConfirmDialog buildDeletionDialog(App app, App database, Runnable callback) {
 		ConfirmDialog deletionDialog = new ConfirmDialog();
 		deletionDialog.setHeader("Deletion Confirmation Required");
 		if (app.appType == AppType.OWLCMS) {
@@ -145,13 +147,11 @@ public class AppsView extends VerticalLayout {
 		deletionDialog.addConfirmListener(e -> {
 
 			if (app.appType == AppType.OWLCMS) {
-				Map<AppType, App> apps2 = flyCommands.getApps();
-				App dbApp = apps2.get(AppType.DB);
-				if (dbApp != null) {
+				if (database != null) {
 				logDialog.append("Deleting OWLCMS " + app.name, UI.getCurrent());
 				flyCommands.appDestroy(app, null);
-				logDialog.append("Deleting OWLCMS database " + dbApp.name, UI.getCurrent());
-				flyCommands.appDestroy(dbApp, callback);
+				logDialog.append("Deleting OWLCMS database " + database.name, UI.getCurrent());
+				flyCommands.appDestroy(database, callback);
 			} else {
 				logDialog.append("Deleting OWLCMS - no database " + app.name, UI.getCurrent());
 					flyCommands.appDestroy(app, callback);
@@ -167,7 +167,7 @@ public class AppsView extends VerticalLayout {
 		return deletionDialog;
 	}
 
-	private ConfirmDialog buildStopDialog(App app, Runnable callback) {
+	private ConfirmDialog buildStopDialog(App app, App database, Runnable callback) {
 		ConfirmDialog stopDialog = new ConfirmDialog();
 		stopDialog.setHeader("Stop Confirmation Required");
 		if (app.appType == AppType.OWLCMS) {
@@ -203,13 +203,11 @@ public class AppsView extends VerticalLayout {
 		stopDialog.addConfirmListener(e -> {
 
 			if (app.appType == AppType.OWLCMS) {
-				Map<AppType, App> apps2 = flyCommands.getApps();
-				App dbApp = apps2.get(AppType.DB);
-				if (dbApp != null) {
+				if (database != null) {
 				logDialog.append("Suspending OWLCMS " + app.name, UI.getCurrent());
 				flyCommands.appStop(app, null);
-				logDialog.append("Suspending OWLCMS database " + dbApp.name, UI.getCurrent());
-				flyCommands.appStop(dbApp, callback);
+				logDialog.append("Suspending OWLCMS database " + database.name, UI.getCurrent());
+				flyCommands.appStop(database, callback);
 			} else {
 				logDialog.append("Suspending OWLCMS - no database " + app.name, UI.getCurrent());
 					flyCommands.appStop(app, callback);
@@ -280,14 +278,8 @@ public class AppsView extends VerticalLayout {
 		new Thread(() -> {
 			// ui.access(() -> {
 			// this also retrieves the region for the applications if available
-			Map<AppType, App> appsList = flyCommands.getApps();
-			regionCode = null;
-			for (App app : appsList.values()) {
-				if (app.regionCode != null && !app.regionCode.isBlank()) {
-					regionCode = app.regionCode;
-				}
-				break;
-			}
+			List<App> appsList = flyCommands.getApps();
+			regionCode = getRegionCode(appsList);
 
 			ui.access(() -> {
 				showApps(appsList, appsArea);
@@ -299,30 +291,26 @@ public class AppsView extends VerticalLayout {
 
 	private void doSilentListRefresh(VerticalLayout appsArea, UI ui) {
 		new Thread(() -> {
-			Map<AppType, App> appsList = flyCommands.getApps();
-			regionCode = null;
-			for (App app : appsList.values()) {
-				if (app.regionCode != null && !app.regionCode.isBlank()) {
-					regionCode = app.regionCode;
-				}
-				break;
-			}
+			List<App> appsList = flyCommands.getApps();
+			regionCode = getRegionCode(appsList);
 
 			ui.access(() -> {
 				appsArea.removeAll();
 				showApps(appsList, appsArea);
+				logDialog.hide();
 			});
 		}).start();
 	}
 
-	private Div showApplication(App app) {
+	private Div showApplication(App app, App database, List<App> appList, boolean showExplanation,
+			boolean showLabel) {
 		HorizontalLayout appSection = new HorizontalLayout();
 		appSection.setMargin(false);
 		appSection.setPadding(false);
 		appSection.setAlignItems(Alignment.START);
 
 		// Left column: label
-		NativeLabel label = new NativeLabel(app.appType.toString());
+		NativeLabel label = new NativeLabel(showLabel ? app.appType.toString() : "");
 		label.setWidth(LEFT_LABEL_WIDTH);
 		appSection.add(label);
 
@@ -332,23 +320,16 @@ public class AppsView extends VerticalLayout {
 		contentDiv.setPadding(false);
 		contentDiv.setSpacing(false);
 
-		// Explanation (add directly, avoid nested VerticalLayout)
-		Html explanation = new Html(getExplanationForAppType(app.appType));
-		contentDiv.add(explanation);
+		if (showExplanation) {
+			contentDiv.add(new Html(getExplanationForAppType(app.appType)));
+		}
 
 		UI ui = UI.getCurrent();
 
-		// Details and controls row
-		HorizontalLayout controlsLayout = new HorizontalLayout();
-		controlsLayout.setMargin(false);
-		controlsLayout.setPadding(false);
-		controlsLayout.setAlignItems(Alignment.CENTER);
-
 		if (app.created) {
-			showExistingApplication(app, controlsLayout, ui);
-			contentDiv.add(controlsLayout);
+			showExistingApplication(app, database, contentDiv, appList, ui);
 		} else {
-			showNewApplication(app, contentDiv, controlsLayout, ui);
+			showNewApplication(app, contentDiv, ui);
 		}
 		appSection.add(contentDiv);
 
@@ -369,9 +350,10 @@ public class AppsView extends VerticalLayout {
 				case TRACKER ->
 				"""
 					<ul style="line-height: 1.4; width: 45em; margin: 0; padding-left: 1em;">
-						<li>When running in the cloud, TRACKER is used to show scoreboards to anyone on the internet.
-						<li><u>You don't need TRACKER in the cloud if you don't want remote scoreboards.</u>
-						<li>The Shared Key set at the bottom of this page protects the communications between OWLCMS and TRACKER.
+						<li>When running in the cloud, TRACKER is used to show scoreboards to anyone on the internet, or to produce custom documents and displays
+						<li><u>You don't need TRACKER in the cloud if you don't want remote scoreboards or custom outputs.</u>
+						<li>Select a cloud OWLCMS from the ones shown above to connect it to this tracker
+						<li>If using a competition-site laptop, just set the key.
 					</ul>
 				""";
 			case PUBLICRESULTS ->
@@ -386,26 +368,25 @@ public class AppsView extends VerticalLayout {
 		};
 	}
 
-	private void showNewApplication(App app, VerticalLayout contentDiv, HorizontalLayout hl, UI ui) {
-		String latestVersion = app.getReferenceVersion();
-		// Version info (use Div to avoid nested VerticalLayout)
-		Html versionHtml = new Html(
-				"""
-					<div>latest available version: %s</div>
-				""".formatted(latestVersion));
-		Div versionInfo = new Div();
-		versionInfo.add(versionHtml);
-		versionInfo.getStyle().set("width", "20em");
-		versionInfo.getStyle().set("margin-top", "0.1em");
-		versionInfo.getStyle().set("margin-bottom", "0.1em");
-		contentDiv.add(versionInfo);
+	private void showNewApplication(App app, VerticalLayout contentDiv, UI ui) {
+		HorizontalLayout newApplicationLayout = new HorizontalLayout();
+		newApplicationLayout.setMargin(false);
+		newApplicationLayout.setPadding(false);
+		newApplicationLayout.setAlignItems(Alignment.END);
+
+		VerticalLayout details = new VerticalLayout();
+		details.setMargin(false);
+		details.setPadding(false);
+		details.setSpacing(false);
+		details.setWidth(APP_DETAILS_WIDTH);
+
+		ComboBox<String> versionSelector = createVersionSelector(app, "Version to install");
 
 		TextField nameField = new TextField("Application Name (without .fly.dev)");
 		nameField.setAllowedCharPattern("[A-Za-z0-9-]");
 		nameField.setValue(app.name);
 		nameField.setPlaceholder("Letters, numbers and hyphens");
 		nameField.setWidth("20em");
-		hl.add(nameField);
 		nameField.setRequired(true);
 		nameField.setRequiredIndicatorVisible(true);
 
@@ -424,6 +405,7 @@ public class AppsView extends VerticalLayout {
 			serverLoc = serverLocations.get(0);
 		}
 		serverCombo.setValue(serverLoc);
+		details.add(nameField, serverCombo);
 
 		Button creationButton = new Button("Create",
 				e -> {
@@ -439,16 +421,7 @@ public class AppsView extends VerticalLayout {
 							nameField.setInvalid(false);
 							app.name = value.toLowerCase();
 							app.regionCode = serverCombo.getValue().getCode();
-							// If version is unknown, use "latest" for deployment
-							if (latestVersion.contains("unknown")) {
-								VersionInfo updatedInfo;
-								if (app.appType == AppType.TRACKER) {
-									updatedInfo = new VersionInfo("latest", AppType.TRACKER.releaseApiUrl);
-								} else {
-									updatedInfo = new VersionInfo("latest");
-								}
-								app.setVersionInfo(updatedInfo);
-							}
+							app.setDeploymentVersion(versionSelector.getValue());
 						flyCommands.appCreate(app, () -> doSilentListRefresh(apps, ui));
 						} catch (NameTakenException e1) {
 							nameField.setErrorMessage(siteName + " is already taken.");
@@ -459,14 +432,21 @@ public class AppsView extends VerticalLayout {
 						}
 					}
 				});
-		hl.add(serverCombo, creationButton);
-		contentDiv.add(hl);
+		HorizontalLayout deploymentControls = new HorizontalLayout(versionSelector, creationButton);
+		deploymentControls.setMargin(false);
+		deploymentControls.setPadding(false);
+		deploymentControls.setAlignItems(Alignment.END);
+		newApplicationLayout.add(details, deploymentControls);
+		contentDiv.add(newApplicationLayout);
 	}
 
-	private void showExistingApplication(App app, HorizontalLayout hl, UI ui) {
-		// Mark this controls block for existing apps so we can style it via CSS
-		hl.addClassName("existingApp");
-		hl.getStyle().set("margin-top", "1em");
+	private void showExistingApplication(App app, App database, VerticalLayout contentDiv, List<App> appList, UI ui) {
+		HorizontalLayout existingLayout = new HorizontalLayout();
+		existingLayout.addClassName("existingApp");
+		existingLayout.setMargin(false);
+		existingLayout.setPadding(false);
+		existingLayout.setAlignItems(Alignment.START);
+		existingLayout.getStyle().set("margin-top", "1em");
 		Anchor a = new Anchor("https://" + app.name + ".fly.dev", app.name + ".fly.dev", AnchorTarget.BLANK);
 		a.getStyle().set("text-decoration", "underline");
 		String websocketUrl = "wss://" + app.name + ".fly.dev/ws";
@@ -477,6 +457,9 @@ public class AppsView extends VerticalLayout {
 		VerticalLayout versionInfo = new VerticalLayout(a);
 		if (app.appType == AppType.TRACKER) {
 			versionInfo.add(new NativeLabel("websocket: " + websocketUrl));
+		}
+		if (app.appType == AppType.OWLCMS) {
+			versionInfo.add(new NativeLabel(database == null ? "database: not found" : "database: " + database.name));
 		}
 		versionInfo.add(
 				new Html(
@@ -491,32 +474,48 @@ public class AppsView extends VerticalLayout {
 		versionInfo.setMargin(false);
 		versionInfo.setPadding(false);
 		versionInfo.setSpacing(false);
-		versionInfo.setWidth("20em");
-		hl.add(versionInfo);
+		versionInfo.setWidth(APP_DETAILS_WIDTH);
+
+		VerticalLayout rightControls = new VerticalLayout();
+		rightControls.setMargin(false);
+		rightControls.setPadding(false);
+		rightControls.setSpacing(false);
+		rightControls.setWidth(APP_CONTROLS_WIDTH);
+		ComboBox<String> versionSelector = createVersionSelector(app, "Version to install");
+		versionSelector.setWidth("10em");
+		versionSelector.setValue(latestVersion);
+
+		HorizontalLayout actionControls = new HorizontalLayout();
+		actionControls.setMargin(false);
+		actionControls.setPadding(false);
+		actionControls.setAlignItems(Alignment.CENTER);
 
 		Button updateButton = new Button("Update",
-			e -> flyCommands.appDeploy(app, () -> doSilentListRefresh(apps, ui)));
+			e -> {
+				app.setDeploymentVersion(versionSelector.getValue());
+				flyCommands.appDeploy(app, () -> doSilentListRefresh(apps, ui));
+			});
 		if (updateRequired) {
 			updateButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 		}
-		hl.add(updateButton);
+		actionControls.add(updateButton);
 
 		Button restartButton = new Button("Restart",
 				e -> {
-					flyCommands.appRestart(app);
+					flyCommands.appRestart(app, database);
 			});
-		hl.add(restartButton);
+		actionControls.add(restartButton);
 
-		ConfirmDialog deletionDialog = buildDeletionDialog(app,
+		ConfirmDialog deletionDialog = buildDeletionDialog(app, database,
 				() -> doListApplications(apps, ui));
 		Button deleteButton = new Button("Delete");
 		deleteButton.addClickListener(event -> {
 			deletionDialog.open();
 		});
-		hl.add(deleteButton);
+		actionControls.add(deleteButton);
 
 		if (!app.stopped) {
-			ConfirmDialog stopDialog = buildStopDialog(app,
+			ConfirmDialog stopDialog = buildStopDialog(app, database,
 					() -> {
 						try {
 							Thread.sleep(2000);
@@ -528,158 +527,179 @@ public class AppsView extends VerticalLayout {
 			stopButton.addClickListener(event -> {
 				stopDialog.open();
 			});
-			hl.add(stopButton);
+			actionControls.add(stopButton);
 		}
+		HorizontalLayout deploymentControls = new HorizontalLayout(versionSelector, actionControls);
+		deploymentControls.setMargin(false);
+		deploymentControls.setPadding(false);
+		deploymentControls.setAlignItems(Alignment.END);
+		rightControls.add(deploymentControls);
+		if (app.appType == AppType.TRACKER) {
+			rightControls.add(showTrackerKeyControls(app, appList));
+		}
+		existingLayout.add(versionInfo, rightControls);
+		contentDiv.add(existingLayout);
 	}
 
-	private void showSharedKey(VerticalLayout apps, boolean trackerConfigured) {
-		HorizontalLayout sharedKeySection = new HorizontalLayout();
-		sharedKeySection.setMargin(false);
-		sharedKeySection.setPadding(false);
-		sharedKeySection.setAlignItems(Alignment.START);
-
-		// Left column: label
-		NativeLabel label = new NativeLabel("Shared Key");
-		label.setWidth(LEFT_LABEL_WIDTH);
-		sharedKeySection.add(label);
-
-		// Right column: all content (explanation, controls)
-		VerticalLayout contentDiv = new VerticalLayout();
-		contentDiv.setMargin(false);
-		contentDiv.setPadding(false);
-		contentDiv.setSpacing(false);
-
-		// Explanation (add directly, avoid nested VerticalLayout)
-		Html explanation = new Html(
-				"""
-						<ul style="line-height: 1.4; width: 45em; margin: 0; padding-left: 1em;">
-						<li>Set the shared key to protect communications between OWLCMS and TRACKER
-						<li>You can change it later; applying the secrets will deploy and restart the applications.
-						<li><u>If OWLCMS is running on a laptop</u>, copy the key to the Connections configuration in the OWLCMS settings, and use the websocket destination indicated in the Tracker section.
-						</ul>
-						""");
-		contentDiv.add(explanation);
-
-		// Key and connection controls
-		HorizontalLayout controlsLayout = new HorizontalLayout();
-		controlsLayout.setMargin(false);
-		controlsLayout.setPadding(false);
-		controlsLayout.setAlignItems(Alignment.START);
-		controlsLayout.getStyle().set("margin-top", "1em");
-
-		TextField sharedKeyField = new TextField();
-		sharedKeyField.setTitle("Shared string between owlcms and public results");
-		sharedKeyField.setPlaceholder("enter a shared string");
-		sharedKeyField.setWidth("15em");
-		sharedKeyField.setValue("");
-
-		Checkbox connectOwlcmsToTracker = new Checkbox("Connect OWLCMS to Tracker");
-		connectOwlcmsToTracker.setVisible(trackerConfigured);
-
-		Button generateKeyButton = new Button("Generate Shared Key",
-				e -> {
-					sharedKeyField.setValue(generateRandomString(20));
-				});
-
-		Button setSecretsButton = new Button("Apply Key and Connection Settings",
-				e -> {
-					if (sharedKeyField.getValue() == null || sharedKeyField.getValue().isBlank()) {
-						sharedKeyField.setErrorMessage("The shared key cannot be empty");
-						sharedKeyField.setInvalid(true);
-					} else {
-						flyCommands.doSetSharedKey(sharedKeyField.getValue(), connectOwlcmsToTracker.getValue(),
-								this::confirmSecretsDeployment);
-					}
-				});
-
-		HorizontalLayout generatorAndConnectionLayout = new HorizontalLayout(generateKeyButton, connectOwlcmsToTracker);
-		generatorAndConnectionLayout.setMargin(false);
-		generatorAndConnectionLayout.setPadding(false);
-		generatorAndConnectionLayout.setAlignItems(Alignment.CENTER);
-
-		HorizontalLayout actionLayout = new HorizontalLayout(setSecretsButton);
-		actionLayout.setMargin(false);
-		actionLayout.setPadding(false);
-		actionLayout.getStyle().set("margin-top", "0.5em");
-
-		VerticalLayout actionControls = new VerticalLayout(generatorAndConnectionLayout, actionLayout);
-		actionControls.setMargin(false);
-		actionControls.setPadding(false);
-		actionControls.setSpacing(false);
-
-		controlsLayout.add(sharedKeyField, actionControls);
-		contentDiv.add(controlsLayout);
-		sharedKeySection.add(contentDiv);
-
-		Div wrapper = new Div(sharedKeySection);
-		apps.add(wrapper);
-	}
-
-	private void confirmSecretsDeployment() {
-		ConfirmDialog confirmation = new ConfirmDialog();
-		confirmation.setHeader("Apply staged secrets?");
-		confirmation.setText("Applying the staged secrets will deploy and restart OWLCMS, Public Results, and Tracker.");
-		confirmation.setConfirmText("Apply Secrets");
-		confirmation.setCancelText("Cancel");
-		confirmation.setCancelable(true);
-		confirmation.addConfirmListener(e -> flyCommands.deployStagedSecretsForAllApps());
-		confirmation.open();
-	}
-
-	private void showApps(Map<AppType, App> appMap, VerticalLayout apps) {
+	private void showApps(List<App> appList, VerticalLayout apps) {
 		if (intro != null) {
 			intro.setVisible(false);
 		}
-		App owlcmsApp = appMap.get(AppType.OWLCMS);
-		App publicApp = appMap.get(AppType.PUBLICRESULTS);
-		App trackerApp = appMap.get(AppType.TRACKER);
-
-		// apps.getStyle().set("margin-top", "1em");
 		apps.add(new Hr());
-
-		Div showOwlcmsApp;
-		if (owlcmsApp != null) {
-			showOwlcmsApp = showApplication(owlcmsApp);
-			apps.add(showOwlcmsApp);
-		} else {
-			owlcmsApp = new App("", AppType.OWLCMS, getCurrentRegion(), "stable", null, null);
-			owlcmsApp.setVersionInfo(new VersionInfo("stable"));
-			showOwlcmsApp = showApplication(owlcmsApp);
-			apps.add(showOwlcmsApp);
-		}
-
-		Div showTrackerApp;
+		showApplications(apps, appList, AppType.OWLCMS);
 		apps.add(new Hr());
-
-		if (trackerApp != null) {
-			showTrackerApp = showApplication(trackerApp);
-			apps.add(showTrackerApp);
-		} else {
-			trackerApp = new App("", AppType.TRACKER, getCurrentRegion(), "stable", null, null);
-			trackerApp.setVersionInfo(
-					new VersionInfo("stable", AppType.TRACKER.releaseApiUrl));
-			showTrackerApp = showApplication(trackerApp);
-			apps.add(showTrackerApp);
-		}
+		showApplications(apps, appList, AppType.TRACKER);
 
 		if (SHOW_PUBLICRESULTS) {
-			Div showPublicApp;
 			apps.add(new Hr());
+			showApplications(apps, appList, AppType.PUBLICRESULTS);
+		}
+	}
 
-			if (publicApp != null) {
-				showPublicApp = showApplication(publicApp);
-				apps.add(showPublicApp);
-			} else {
-				publicApp = new App("", AppType.PUBLICRESULTS, getCurrentRegion(), "stable", null, null);
-				publicApp.setVersionInfo(new VersionInfo("stable"));
-				showPublicApp = showApplication(publicApp);
-				apps.add(showPublicApp);
+	private HorizontalLayout showTrackerKeyControls(App tracker, List<App> appList) {
+		List<App> owlcmsApps = appList.stream().filter(app -> app.appType == AppType.OWLCMS)
+				.sorted(Comparator.comparing(app -> app.name)).toList();
+		HorizontalLayout keyControls = new HorizontalLayout();
+		keyControls.setAlignItems(Alignment.END);
+		keyControls.setPadding(false);
+		keyControls.setMargin(false);
+		keyControls.getStyle().set("margin-top", "0.5em");
+
+		ComboBox<App> owlcmsSelector = new ComboBox<>("Cloud OWLCMS (optional)");
+		owlcmsSelector.setItems(owlcmsApps);
+		owlcmsSelector.setItemLabelGenerator(owlcms -> owlcms.name);
+		owlcmsSelector.setClearButtonVisible(true);
+		owlcmsSelector.setWidth(CLOUD_OWLCMS_SELECTOR_WIDTH);
+
+		TextField sharedKeyField = new TextField("Shared Key");
+		sharedKeyField.setWidth("15em");
+		sharedKeyField.setPlaceholder("Enter a shared string");
+		Button generateKeyButton = new Button("Generate Key", event -> sharedKeyField.setValue(generateRandomString(20)));
+		Button keyButton = new Button("Apply Key", event -> {
+			App owlcms = owlcmsSelector.getValue();
+			String sharedKey = sharedKeyField.getValue();
+			if (sharedKey == null || sharedKey.isBlank()) {
+				sharedKeyField.setErrorMessage("A shared key is required for this Tracker");
+				sharedKeyField.setInvalid(true);
+				return;
 			}
+			ConfirmDialog confirmation = new ConfirmDialog();
+			confirmation.setHeader("Apply Tracker key?");
+			confirmation.setText(owlcms == null
+					? "Configure " + tracker.name + " to expect this key."
+					: owlcms.name + " will now connect to this tracker.");
+			confirmation.setConfirmText("Apply Key");
+			confirmation.setCancelText("Cancel");
+			confirmation.setCancelable(true);
+			confirmation.addConfirmListener(confirm -> flyCommands.configureTrackerConnection(tracker, owlcms, sharedKey,
+					() -> doSilentListRefresh(apps, UI.getCurrent())));
+			confirmation.open();
+		});
+		Button disconnectButton = new Button("Disconnect", event -> {
+			App owlcms = owlcmsSelector.getValue();
+			if (owlcms == null) {
+				return;
+			}
+			ConfirmDialog confirmation = new ConfirmDialog();
+			confirmation.setHeader("Disconnect OWLCMS?");
+			confirmation.setText(owlcms.name + " will no longer connect to this tracker.");
+			confirmation.setConfirmText("Disconnect");
+			confirmation.setCancelText("Cancel");
+			confirmation.setCancelable(true);
+			confirmation.addConfirmListener(confirm -> flyCommands.disconnectTrackerConnection(tracker, owlcms,
+					() -> doSilentListRefresh(apps, UI.getCurrent())));
+			confirmation.open();
+		});
+		disconnectButton.setVisible(false);
+		Runnable updateConnectionActions = () -> {
+			App owlcms = owlcmsSelector.getValue();
+			boolean connected = owlcms != null && flyCommands.hasTrackerConnection(tracker, owlcms);
+			boolean replacementKeyProvided = !sharedKeyField.isEmpty();
+			sharedKeyField.setPlaceholder(connected ? "(hidden)" : "Enter a shared string");
+			keyButton.setText(owlcms == null ? "Apply Key" : "Connect");
+			keyButton.setVisible(!connected || replacementKeyProvided);
+			disconnectButton.setVisible(connected && !replacementKeyProvided);
+		};
+		boolean[] restoringOwlcmsSelection = {false};
+		owlcmsSelector.addValueChangeListener(event -> {
+			if (!restoringOwlcmsSelection[0] && event.getValue() == null && event.getOldValue() != null
+					&& flyCommands.hasTrackerConnection(tracker, event.getOldValue())) {
+				App connectedOwlcms = event.getOldValue();
+				ConfirmDialog confirmation = new ConfirmDialog();
+				confirmation.setHeader("Disconnect OWLCMS?");
+				confirmation.setText(connectedOwlcms.name + " will no longer connect to this tracker.");
+				confirmation.setConfirmText("Disconnect");
+				confirmation.setCancelText("Cancel");
+				confirmation.setCancelable(true);
+				confirmation.addConfirmListener(confirm -> flyCommands.disconnectTrackerConnection(tracker, connectedOwlcms,
+						() -> doSilentListRefresh(apps, UI.getCurrent())));
+				confirmation.addCancelListener(cancel -> {
+					restoringOwlcmsSelection[0] = true;
+					owlcmsSelector.setValue(connectedOwlcms);
+					restoringOwlcmsSelection[0] = false;
+				});
+				confirmation.open();
+			}
+			updateConnectionActions.run();
+		});
+		sharedKeyField.addValueChangeListener(event -> updateConnectionActions.run());
+		owlcmsApps.stream().filter(owlcms -> flyCommands.hasTrackerConnection(tracker, owlcms)).findFirst()
+				.ifPresent(owlcmsSelector::setValue);
+		updateConnectionActions.run();
+		keyControls.add(owlcmsSelector, sharedKeyField, generateKeyButton, keyButton, disconnectButton);
+		return keyControls;
+	}
+
+	private void showApplications(VerticalLayout apps, List<App> appList, AppType appType) {
+		VerticalLayout section = new VerticalLayout();
+		section.setMargin(false);
+		section.setPadding(false);
+		section.setSpacing(false);
+
+		List<App> appsOfType = appList.stream().filter(app -> app.appType == appType)
+				.sorted(Comparator.comparing(app -> app.name)).toList();
+		for (int index = 0; index < appsOfType.size(); index++) {
+			App app = appsOfType.get(index);
+			boolean showExplanation = appType != AppType.OWLCMS || index == 0;
+			section.add(showApplication(app, findDatabase(app, appList), appList, showExplanation, index == 0));
 		}
 
-		// Show shared key section after TRACKER
-		apps.add(new Hr());
-		showSharedKey(apps, trackerApp != null);
+		Button addButton = new Button("+ Add Another", event -> {
+			App newApp = new App("", appType, getCurrentRegion(), "stable", null, null);
+			newApp.setVersionInfo(new VersionInfo("stable", appType.releaseApiUrl));
+			boolean showExplanation = appType != AppType.OWLCMS || section.getComponentCount() == 1;
+			section.addComponentAtIndex(section.getComponentCount() - 1,
+					showApplication(newApp, null, appList, showExplanation, section.getComponentCount() == 1));
+		});
+		section.add(addButton);
+		apps.add(section);
+	}
+
+	private App findDatabase(App app, List<App> appList) {
+		if (app.appType != AppType.OWLCMS) {
+			return null;
+		}
+		return appList.stream().filter(candidate -> candidate.appType == AppType.DB)
+				.filter(candidate -> candidate.name.equals(app.name + "-db")).findFirst().orElse(null);
+	}
+
+	private ComboBox<String> createVersionSelector(App app, String label) {
+		ComboBox<String> versionSelector = new ComboBox<>(label);
+		versionSelector.setWidth("20em");
+		List<String> versions = VersionInfo.fetchReleaseVersions(app.appType.releaseApiUrl);
+		String defaultVersion = app.getReferenceVersion();
+		if (versions.isEmpty()) {
+			versionSelector.setItems(defaultVersion);
+		} else {
+			versionSelector.setItems(versions);
+		}
+		versionSelector.setValue(defaultVersion);
+		return versionSelector;
+	}
+
+	private String getRegionCode(List<App> appList) {
+		return appList.stream().filter(app -> app.appType != AppType.DB).map(app -> app.regionCode)
+				.filter(region -> region != null && !region.isBlank()).findFirst().orElse(null);
 	}
 
 	private String getCurrentRegion() {

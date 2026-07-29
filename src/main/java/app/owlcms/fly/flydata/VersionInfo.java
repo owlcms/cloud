@@ -30,6 +30,8 @@ public class VersionInfo {
 	// Static cache to avoid repeated fetches for the same API URL (expires after 2 minutes)
 	private static final ConcurrentHashMap<String, String> versionCache = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Long> cacheTimestamps = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, List<String>> releaseCache = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, Long> releaseCacheTimestamps = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Boolean> inFlightFetches = new ConcurrentHashMap<>();
 	private static final long CACHE_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes (GitHub allows 60 requests/hour)
 	private static final int FETCH_ATTEMPTS = 2;
@@ -129,6 +131,49 @@ public class VersionInfo {
 	} catch (Exception e) {
 		logger.debug("Unexpected error fetching latest release version from {}: {}", apiUrl, e.getMessage());
 		return "unknown";
+		}
+	}
+
+	public static List<String> fetchReleaseVersions(String apiUrl) {
+		Long cachedTime = releaseCacheTimestamps.get(apiUrl);
+		if (cachedTime != null && (System.currentTimeMillis() - cachedTime) < CACHE_EXPIRY_MS) {
+			return releaseCache.get(apiUrl);
+		}
+
+		try {
+			URL url = URI.create(apiUrl + "?per_page=100").toURL();
+			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+			conn.setConnectTimeout(FETCH_TIMEOUT_MS);
+			conn.setReadTimeout(FETCH_TIMEOUT_MS);
+			conn.setRequestMethod("GET");
+			conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
+			if (conn.getResponseCode() != 200) {
+				return List.of();
+			}
+
+			Scanner scanner = new Scanner(conn.getInputStream());
+			StringBuilder response = new StringBuilder();
+			while (scanner.hasNextLine()) {
+				response.append(scanner.nextLine());
+			}
+			scanner.close();
+
+			List<String> versions = new ArrayList<>();
+			JsonParser parser = new JsonParser();
+			parser.parse(response.toString()).getAsJsonArray().forEach(release -> {
+				JsonObject releaseObject = release.getAsJsonObject();
+				if (!releaseObject.get("draft").getAsBoolean()) {
+					versions.add(releaseObject.get("tag_name").getAsString());
+				}
+			});
+			versions.sort((left, right) -> new ComparableVersion(right).compareTo(new ComparableVersion(left)));
+			List<String> result = List.copyOf(versions);
+			releaseCache.put(apiUrl, result);
+			releaseCacheTimestamps.put(apiUrl, System.currentTimeMillis());
+			return result;
+		} catch (Exception e) {
+			logger.debug("Unable to fetch releases from {}: {}", apiUrl, e.getMessage());
+			return List.of();
 		}
 	}
 

@@ -6,9 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -28,12 +26,13 @@ import app.owlcms.fly.ui.ExecArea;
 import app.owlcms.fly.ui.LogDialog;
 
 public class FlyCtlCommands {
+	private static final String TRACKER_CONNECTION_SECRET_PREFIX = "OWLCMS_CONNECTION_";
 	int appNameStatus;
 	int hostNameStatus;
 	Logger logger = LoggerFactory.getLogger(FlyCtlCommands.class);
 	String reason = "";
 	int tokenStatus = -1;
-	private Map<AppType, App> appMap;
+	private List<App> apps = List.of();
 	private Path configFile;
 	private ExecArea execArea;
 	private LogDialog logDialog;
@@ -54,14 +53,14 @@ public class FlyCtlCommands {
 	}
 
 	public void appDeploy(App app, Runnable callback) {
-		String referenceVersion = app.getReferenceVersion();
+		String deploymentVersion = app.getDeploymentVersion();
 		String configFile = app.appType.getConfigFile();
 		// Strictly enforce a SINGLE machine: --ha=false prevents Fly from
 		// auto-creating a second (HA) machine on a fresh launch, and the chained
 		// `scale count 1` clamps any app that has already drifted to 2+ machines
 		// back down to exactly one. The in-memory hub requires a single instance.
 		doAppCommand(app,
-				"fly deploy --app " + app.name + " --image " + app.appType.image + ":" + referenceVersion
+				"fly deploy --app " + app.name + " --image " + app.appType.image + ":" + deploymentVersion
 						+ " --ha=false --config " + configFile
 						+ " && " + scaleToOne(app),
 				callback, null);
@@ -76,19 +75,16 @@ public class FlyCtlCommands {
 		doAppCommand(app, "fly scale count 0 --yes --app " + app.name, callback, null);
 	}
 
-	public void appRestart(App app) {
-		appRestart(app, null);
+	public void appRestart(App app, App database) {
+		appRestart(app, database, null);
 	}
 
-	public void appRestart(App app, UI ui) {
-		if (app.appType == AppType.OWLCMS) {
-			App app2 = appMap.get(AppType.DB);
-			if (app2 != null) {
-				String dbMachine = getCurrentMachineId(app2.name);
+	public void appRestart(App app, App database, UI ui) {
+		if (app.appType == AppType.OWLCMS && database != null) {
+				String dbMachine = getCurrentMachineId(database.name);
 				if (dbMachine != null && !dbMachine.isEmpty()) {
-					doAppCommand(app2, "fly machine restart " + dbMachine + " --app " + app2.name, null, ui);
+					doAppCommand(database, "fly machine restart " + dbMachine + " --app " + database.name, null, ui);
 				}
-			}
 		}
 		
 		// Get the current machine ID (may have changed since page load)
@@ -105,6 +101,46 @@ public class FlyCtlCommands {
 		}
 	}
 
+	public void configureTrackerConnection(App tracker, App owlcms, String sharedKey, Runnable callback) {
+		String quotedKey = shellQuote(sharedKey);
+		String command = "fly secrets set OWLCMS_UPDATEKEY=" + quotedKey + " --app " + tracker.name;
+		if (owlcms != null) {
+			command = "fly secrets set OWLCMS_UPDATEKEY=" + quotedKey + " "
+					+ getTrackerConnectionSecretName(owlcms.name) + "=connected --app " + tracker.name;
+			String staleConnectionSecrets = tracker.getSecretNames().stream()
+					.filter(secretName -> secretName.startsWith(TRACKER_CONNECTION_SECRET_PREFIX))
+					.filter(secretName -> !secretName.equals(getTrackerConnectionSecretName(owlcms.name)))
+					.map(secretName -> "fly secrets unset " + secretName + " --app " + tracker.name)
+					.reduce((first, second) -> first + " && " + second + " && ").orElse("");
+			command = staleConnectionSecrets + command;
+			String trackerUrl = shellQuote("wss://" + tracker.name + ".fly.dev/ws");
+			command += " && fly secrets set OWLCMS_REMOTE=" + trackerUrl
+					+ " OWLCMS_UPDATEKEY=" + quotedKey + " --app " + owlcms.name;
+		}
+		doAppCommand(tracker, command, callback, null);
+	}
+
+	public void disconnectTrackerConnection(App tracker, App owlcms, Runnable callback) {
+		String command = "fly secrets unset OWLCMS_REMOTE --app " + owlcms.name
+				+ " && fly secrets unset " + getTrackerConnectionSecretName(owlcms.name) + " --app " + tracker.name;
+		doAppCommand(tracker, command, callback, null);
+	}
+
+	public boolean hasTrackerConnection(App tracker, App owlcms) {
+		String expectedSecretName = normalizeConnectionSecretName(getTrackerConnectionSecretName(owlcms.name));
+		return tracker.getSecretNames().stream()
+				.map(this::normalizeConnectionSecretName)
+				.anyMatch(expectedSecretName::equals);
+	}
+
+	private String getTrackerConnectionSecretName(String owlcmsName) {
+		return TRACKER_CONNECTION_SECRET_PREFIX + owlcmsName.replace('-', '_').toUpperCase();
+	}
+
+	private String normalizeConnectionSecretName(String secretName) {
+		return secretName.replace("_", "").replace("-", "").toUpperCase();
+	}
+
 	private void deployStagedSecrets(App app, UI ui) {
 		doAppCommand(app, "fly secrets deploy --app " + app.name, null, ui);
 	}
@@ -116,6 +152,10 @@ public class FlyCtlCommands {
 	 */
 	private String scaleToOne(App app) {
 		return "fly scale count 1 --yes --app " + app.name;
+	}
+
+	private String shellQuote(String value) {
+		return "'" + value.replace("'", "'\"'\"'") + "'";
 	}
 
 	/**
@@ -264,7 +304,7 @@ public class FlyCtlCommands {
 			} else if (execArea != null) {
 				execArea.clear(ui);
 			}
-				for (App app : appMap.values()) {
+				for (App app : apps) {
 				if (app.appType != AppType.OWLCMS && app.appType != AppType.PUBLICRESULTS && app.appType != AppType.TRACKER) {
 					continue;
 				}
@@ -307,7 +347,7 @@ public class FlyCtlCommands {
 				// connect OWLCMS to PUBLICRESULTS and TRACKER
 				if (app.appType == AppType.OWLCMS) {
 					try {
-						App pr = appMap.get(AppType.PUBLICRESULTS);
+						App pr = findFirstApp(AppType.PUBLICRESULTS);
 						if (pr != null && pr.name != null && !pr.name.isBlank()) {
 							String name = "https://" + pr.name + ".fly.dev";
 							hostNameStatus = 0;
@@ -337,7 +377,7 @@ public class FlyCtlCommands {
 						}
 
 						// When selected, configure the Tracker URL and its matching authentication key.
-						App tracker = appMap.get(AppType.TRACKER);
+						App tracker = findFirstApp(AppType.TRACKER);
 						if (connectOwlcmsToTracker && tracker != null && tracker.name != null && !tracker.name.isBlank()) {
 							String wssUrl = "wss://" + tracker.name + ".fly.dev/ws";
 							hostNameStatus = 0;
@@ -423,7 +463,7 @@ public class FlyCtlCommands {
 				execArea.append("Deploying staged secrets. Applications will restart...", ui);
 			}
 			
-			for (App app : appMap.values()) {
+			for (App app : apps) {
 				if (app.appType != AppType.OWLCMS && app.appType != AppType.PUBLICRESULTS && app.appType != AppType.TRACKER) {
 					continue;
 				}
@@ -443,11 +483,11 @@ public class FlyCtlCommands {
 		}).start();
 	}
 
-	public synchronized Map<AppType, App> getApps() throws NoPermissionException {
+	public synchronized List<App> getApps() throws NoPermissionException {
 		ProcessBuilder builder = createProcessBuilder(getToken());
 		List<String> appNames = getAppNames(builder, UI.getCurrent());
-		appMap = buildAppMap(builder, appNames);
-		return appMap;
+		apps = buildApps(builder, appNames);
+		return apps;
 	}
 
 	public synchronized List<EarthLocation> getServerLocations(EarthLocation clientLocation) {
@@ -486,8 +526,8 @@ public class FlyCtlCommands {
 		VaadinSession.getCurrent().setAttribute("userName", userName);
 	}
 
-	private synchronized Map<AppType, App> buildAppMap(ProcessBuilder builder, List<String> appNames) {
-		Map<AppType, App> apps = new HashMap<>();
+	private synchronized List<App> buildApps(ProcessBuilder builder, List<String> appNames) {
+		List<App> discoveredApps = new ArrayList<>();
 		for (String s : appNames) {
 			try {
 				String commandString = "fly machines list --app %s --json | jq -r '.[] | [.region, .image_ref.repository, .image_ref.tag, .id, .state] | @tsv'"
@@ -509,8 +549,8 @@ public class FlyCtlCommands {
 					App app = new App(s, appType, region, tag, machine, status);
 					app.created = true;
 					if (appType != null) {
-						apps.put(appType, app);
-						logger.info("Added to map: {}", app);
+						discoveredApps.add(app);
+						logger.info("Added application: {}", app);
 					} else {
 						logger.warn("Skipping app {} with unrecognized image {}", s, image);
 					}
@@ -580,8 +620,8 @@ public class FlyCtlCommands {
 						if (appType != null) {
 							App app = new App(s, appType, regionRef[0], version, "", "suspended");
 							app.created = true;
-							apps.put(appType, app);
-							logger.info("Added suspended app to map: {}", app);
+							discoveredApps.add(app);
+							logger.info("Added suspended application: {}", app);
 						} else {
 							logger.warn("Could not determine AppType for suspended app {} with image repository {}", s, repository);
 						}
@@ -593,7 +633,29 @@ public class FlyCtlCommands {
 				e.printStackTrace();
 			}
 		}
-		return apps;
+		discoveredApps.stream().filter(app -> app.appType != AppType.DB)
+				.forEach(app -> loadSecretNames(builder, app));
+		return discoveredApps;
+	}
+
+	private void loadSecretNames(ProcessBuilder builder, App app) {
+		String command = "fly secrets list --app " + app.name
+				+ " --json | jq -r '.. | objects | (.Name // .name // empty) | select(type == \"string\")'";
+		Consumer<String> outputConsumer = secretName -> {
+			if (secretName != null && !secretName.isBlank()) {
+				app.addSecretName(secretName.trim());
+			}
+		};
+		Consumer<String> errorConsumer = error -> logger.debug("Could not retrieve secret names for {}: {}", app.name, error);
+		try {
+			runCommand("retrieving secret names {}", command, outputConsumer, errorConsumer, builder, null);
+		} catch (IOException | InterruptedException e) {
+			logger.debug("Could not retrieve secret names for {}", app.name, e);
+		}
+	}
+
+	private App findFirstApp(AppType appType) {
+		return apps.stream().filter(app -> app.appType == appType).findFirst().orElse(null);
 	}
 
 	private ProcessBuilder createProcessBuilder(String token) {
@@ -637,15 +699,15 @@ public class FlyCtlCommands {
 			ProcessBuilder builder = createProcessBuilder(getToken());
 
 			// these can be overridden by the env pairs
-			String referenceVersion = app.getReferenceVersion();
-			if (referenceVersion == null || referenceVersion.isBlank() || referenceVersion.equalsIgnoreCase("unknown")) {
+			String deploymentVersion = app.getDeploymentVersion();
+			if (deploymentVersion == null || deploymentVersion.isBlank() || deploymentVersion.equalsIgnoreCase("unknown")) {
 				String fallbackVersion = app.getCurrentVersion();
 				if (fallbackVersion == null || fallbackVersion.isBlank()) {
 					fallbackVersion = "stable";
 				}
-				referenceVersion = fallbackVersion;
+				deploymentVersion = fallbackVersion;
 			}
-			builder.environment().put("VERSION", referenceVersion);
+			builder.environment().put("VERSION", deploymentVersion);
 			if (app.regionCode != null && !app.regionCode.isBlank()) {
 				builder.environment().put("REGION", app.regionCode);
 			}

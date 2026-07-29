@@ -1,0 +1,51 @@
+# fly.c3qp3ns8ot app configuration file generated for fhq-competition-rolling-hollow-8223 on 2026-07-29T17:03:00-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'fhq-competition-rolling-hollow-8223'
+primary_region = 'yyz'
+
+[build]
+  image = 'owlcms/owlcms:67.2.0'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'requests'
+    hard_limit = 50
+    soft_limit = 45
+
+[[services]]
+  protocol = ''
+  internal_port = 0
+
+  [[services.ports]]
+    port = 80
+    handlers = ['http']
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ['tls', 'http']
+
+  [services.concurrency]
+    type = 'requests'
+    hard_limit = 50
+    soft_limit = 45
+
+[[restart]]
+  policy = 'on-failure'
+  retries = 10
+  processes = ['app']
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 2
+  memory_mb = 1024
