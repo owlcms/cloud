@@ -7,7 +7,7 @@ public enum AppType {
     OWLCMS("owlcms/owlcms", "scripts/createOwlcms.sh", "https://api.github.com/repos/owlcms/owlcms4/releases", "owlcms.toml"),
     PUBLICRESULTS("owlcms/publicresults", "scripts/createPublicResults.sh",
             "https://api.github.com/repos/owlcms/owlcms4/releases", "publicresults.toml"),
-    TRACKER("owlcms/tracker", "scripts/createTracker.sh", "https://api.github.com/repos/owlcms/owlcms-tracker/releases", "tracker.toml"),
+    TRACKER("owlcms/tracker", "scripts/createTracker.sh", "https://api.github.com/repos/owlcms/tracker/releases", "tracker.toml"),
     DB("flyio/postgres-flex", null, null, null);
 
     public final String image;

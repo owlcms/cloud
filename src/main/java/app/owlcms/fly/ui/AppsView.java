@@ -443,7 +443,7 @@ public class AppsView extends VerticalLayout {
 							if (latestVersion.contains("unknown")) {
 								VersionInfo updatedInfo;
 								if (app.appType == AppType.TRACKER) {
-									updatedInfo = new VersionInfo("latest", "https://api.github.com/repos/jflamy/owlcms-tracker/releases");
+									updatedInfo = new VersionInfo("latest", AppType.TRACKER.releaseApiUrl);
 								} else {
 									updatedInfo = new VersionInfo("latest");
 								}
@@ -657,7 +657,7 @@ public class AppsView extends VerticalLayout {
 		} else {
 			trackerApp = new App("", AppType.TRACKER, getCurrentRegion(), "stable", null, null);
 			trackerApp.setVersionInfo(
-					new VersionInfo("stable", "https://api.github.com/repos/jflamy/owlcms-tracker/releases"));
+					new VersionInfo("stable", AppType.TRACKER.releaseApiUrl));
 			showTrackerApp = showApplication(trackerApp);
 			apps.add(showTrackerApp);
 		}
