@@ -26,14 +26,19 @@ RUN mvn clean package -P production -Dmaven.test.skip=true -Drevision=${VERSION}
 FROM eclipse-temurin:25-jdk-jammy
 WORKDIR /app
 ENV FLYCTL_INSTALL=/app/fly
+ENV DEBIAN_FRONTEND=noninteractive
 # put required utilities in /app/fly/bin
+# The temurin jammy image ships neither curl nor wget, so install curl first.
 RUN <<EOF
-wget -O jq https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux64
+set -eux
+apt-get update
+apt-get install -y --no-install-recommends curl ca-certificates
+rm -rf /var/lib/apt/lists/*
+curl -fsSL -o jq https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux64
 chmod +x ./jq
-mkdir /app/fly
-curl -L https://fly.io/install.sh | sh
-chmod +x /app/fly/bin
-mv jq /app/fly/bin
+mkdir -p /app/fly
+curl -fsSL https://fly.io/install.sh | sh
+mv jq /app/fly/bin/
 EOF
 
 # Copy the versioned jar and rename to fixed name for ENTRYPOINT
