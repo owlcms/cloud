@@ -63,10 +63,6 @@ public class AppsView extends VerticalLayout {
 	private String regionCode;
 	private String clientIpString;
 	
-	// Cache latest versions to avoid multiple fetches
-	private String cachedOwlcmsVersion = null;
-	private String cachedTrackerVersion = null;
-
 	public AppsView() {
 		clientIpString = getClientIp();
 		logDialog = new LogDialog();
@@ -281,6 +277,7 @@ public class AppsView extends VerticalLayout {
 			// this also retrieves the region for the applications if available
 			List<App> appsList = flyCommands.getApps();
 			regionCode = getRegionCode(appsList);
+			preloadStableVersions();
 
 			ui.access(() -> {
 				showApps(appsList, appsArea);
@@ -383,21 +380,7 @@ public class AppsView extends VerticalLayout {
 
 		ComboBox<String> versionSelector = new ComboBox<>("Version to install");
 		versionSelector.setWidth("20em");
-		List<String> stableVersions = getSelectableVersions(app, false);
-		String defaultVersion = stableVersions.isEmpty() ? app.getReferenceVersion() : stableVersions.get(0);
-		versionSelector.setItems(stableVersions.isEmpty() ? List.of(defaultVersion) : stableVersions);
-		versionSelector.setValue(defaultVersion);
-		Checkbox showPrereleases = new Checkbox("Show Prereleases");
-		showPrereleases.addValueChangeListener(event -> {
-			List<String> versions = getSelectableVersions(app, event.getValue());
-			String selectedVersion = versions.isEmpty() ? app.getReferenceVersion() : versions.get(0);
-			versionSelector.setItems(versions.isEmpty() ? List.of(selectedVersion) : versions);
-			versionSelector.setValue(selectedVersion);
-		});
-		VerticalLayout versionControls = new VerticalLayout(versionSelector, showPrereleases);
-		versionControls.setMargin(false);
-		versionControls.setPadding(false);
-		versionControls.setSpacing(false);
+		VerticalLayout versionControls = createVersionControls(app, ui, versionSelector);
 
 		TextField nameField = new TextField("Application Name (without .fly.dev)");
 		nameField.setAllowedCharPattern("[A-Za-z0-9-]");
@@ -469,7 +452,8 @@ public class AppsView extends VerticalLayout {
 		String websocketUrl = "wss://" + app.name + ".fly.dev/ws";
 		String rawVersion = app.getCurrentVersion();
 		String displayVersion = rawVersion + (rawVersion.matches("^[0-9].*$") ? "" : " (version number unknown)");
-		String latestVersion = getLatestReleaseVersion(app.appType);
+		List<String> stableVersions = getCachedSelectableVersions(app, false);
+		String latestVersion = stableVersions.isEmpty() ? "unknown" : stableVersions.get(0);
 		boolean updateRequired = app.isUpdateRequired();
 		VerticalLayout versionInfo = new VerticalLayout(a);
 		if (app.appType == AppType.TRACKER) {
@@ -500,21 +484,7 @@ public class AppsView extends VerticalLayout {
 		rightControls.setWidth(APP_CONTROLS_WIDTH);
 		ComboBox<String> versionSelector = new ComboBox<>("Version to install");
 		versionSelector.setWidth("10em");
-		List<String> stableVersions = getSelectableVersions(app, false);
-		String defaultVersion = stableVersions.isEmpty() ? app.getReferenceVersion() : stableVersions.get(0);
-		versionSelector.setItems(stableVersions.isEmpty() ? List.of(defaultVersion) : stableVersions);
-		versionSelector.setValue(defaultVersion);
-		Checkbox showPrereleases = new Checkbox("Show Prereleases");
-		showPrereleases.addValueChangeListener(event -> {
-			List<String> versions = getSelectableVersions(app, event.getValue());
-			String selectedVersion = versions.isEmpty() ? app.getReferenceVersion() : versions.get(0);
-			versionSelector.setItems(versions.isEmpty() ? List.of(selectedVersion) : versions);
-			versionSelector.setValue(selectedVersion);
-		});
-		VerticalLayout versionControls = new VerticalLayout(versionSelector, showPrereleases);
-		versionControls.setMargin(false);
-		versionControls.setPadding(false);
-		versionControls.setSpacing(false);
+		VerticalLayout versionControls = createVersionControls(app, ui, versionSelector);
 
 		HorizontalLayout actionControls = new HorizontalLayout();
 		actionControls.setMargin(false);
@@ -697,7 +667,6 @@ public class AppsView extends VerticalLayout {
 
 		Button addButton = new Button("+ Add Another", event -> {
 			App newApp = new App("", appType, getCurrentRegion(), "stable", null, null);
-			newApp.setVersionInfo(new VersionInfo("stable", appType.releaseApiUrl));
 			boolean showExplanation = appType != AppType.OWLCMS || section.getComponentCount() == 1;
 			section.addComponentAtIndex(section.getComponentCount() - 1,
 					showApplication(newApp, null, appList, showExplanation, section.getComponentCount() == 1));
@@ -714,9 +683,50 @@ public class AppsView extends VerticalLayout {
 				.filter(candidate -> candidate.name.equals(app.name + "-db")).findFirst().orElse(null);
 	}
 
-	private List<String> getSelectableVersions(App app, boolean showPrereleases) {
-		return VersionInfo.fetchReleaseVersions(app.appType.releaseApiUrl, app.appType.preReleaseApiUrl,
-				showPrereleases, app.appType.fallbackReleaseUrls);
+	private VerticalLayout createVersionControls(App app, UI ui, ComboBox<String> versionSelector) {
+		setSelectableVersions(versionSelector, getCachedSelectableVersions(app, false), app.getCurrentVersion());
+		Checkbox showPrereleases = new Checkbox("Show Prereleases");
+		showPrereleases.addValueChangeListener(event -> loadSelectableVersions(app, event.getValue(), versionSelector,
+				showPrereleases, ui));
+		VerticalLayout versionControls = new VerticalLayout(versionSelector, showPrereleases);
+		versionControls.setMargin(false);
+		versionControls.setPadding(false);
+		versionControls.setSpacing(false);
+		return versionControls;
+	}
+
+	private void loadSelectableVersions(App app, boolean showPrereleases, ComboBox<String> versionSelector,
+			Checkbox showPrereleasesCheckbox, UI ui) {
+		versionSelector.setEnabled(false);
+		new Thread(() -> {
+			VersionInfo.fetchReleaseVersions(app.appType.releaseApiUrl, app.appType.preReleaseApiUrl, showPrereleases,
+					app.appType.fallbackReleaseUrls);
+			List<String> versions = getCachedSelectableVersions(app, showPrereleases);
+			ui.access(() -> {
+				if (showPrereleasesCheckbox.getValue() == showPrereleases) {
+					setSelectableVersions(versionSelector, versions, app.getCurrentVersion());
+				}
+				versionSelector.setEnabled(true);
+			});
+		}).start();
+	}
+
+	private List<String> getCachedSelectableVersions(App app, boolean showPrereleases) {
+		return VersionInfo.getCachedReleaseVersions(app.appType.releaseApiUrl, showPrereleases);
+	}
+
+	private void setSelectableVersions(ComboBox<String> versionSelector, List<String> versions,
+			String fallbackVersion) {
+		String selectedVersion = versions.isEmpty() ? fallbackVersion : versions.get(0);
+		versionSelector.setItems(versions.isEmpty() ? List.of(selectedVersion) : versions);
+		versionSelector.setValue(selectedVersion);
+	}
+
+	private void preloadStableVersions() {
+		for (AppType appType : List.of(AppType.OWLCMS, AppType.TRACKER)) {
+			VersionInfo.fetchReleaseVersions(appType.releaseApiUrl, appType.preReleaseApiUrl, false,
+					appType.fallbackReleaseUrls);
+		}
 	}
 
 	private String getRegionCode(List<App> appList) {
@@ -744,25 +754,4 @@ public class AppsView extends VerticalLayout {
 		return stringBuilder.toString();
 	}
 
-	private String getLatestReleaseVersion(AppType appType) {
-		if (appType == null || appType.releaseApiUrl == null) {
-			return "unknown";
-		}
-		return switch (appType) {
-			case TRACKER -> {
-				if (cachedTrackerVersion == null) {
-					cachedTrackerVersion = VersionInfo.fastFetchLatestReleaseVersion(appType.releaseApiUrl,
-							appType.fallbackReleaseUrls);
-				}
-				yield cachedTrackerVersion;
-			}
-			default -> {
-				if (cachedOwlcmsVersion == null) {
-					cachedOwlcmsVersion = VersionInfo.fastFetchLatestReleaseVersion(appType.releaseApiUrl,
-							appType.fallbackReleaseUrls);
-				}
-				yield cachedOwlcmsVersion;
-			}
-		};
-	}
 }

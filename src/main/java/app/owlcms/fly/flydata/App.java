@@ -20,10 +20,10 @@ public class App implements Comparable<App> {
         this.name = s;
         this.appType = appType;
         this.regionCode = region;
-        if (appType != null && appType.releaseApiUrl != null && !appType.releaseApiUrl.isBlank()) {
-            this.versionInfo = new VersionInfo(version, appType.releaseApiUrl, appType.fallbackReleaseUrls);
-        } else {
-            this.versionInfo = new VersionInfo(version);
+        if (appType != null && appType != AppType.DB && appType.releaseApiUrl != null
+            && !appType.releaseApiUrl.isBlank()) {
+            this.versionInfo = new VersionInfo(version, appType.releaseApiUrl, status != null,
+                    appType.fallbackReleaseUrls);
         }
         this.machine = machine;
         if (status == null) {
@@ -41,16 +41,18 @@ public class App implements Comparable<App> {
 
     @Override
     public String toString() {
+        String versionDescription = versionInfo == null ? "n/a"
+                : versionInfo.getCurrentVersionString() + "/" + versionInfo.getCachedReferenceVersionString();
         return "App [appType=" + appType + ", name=" + name + ", regionCode=" + regionCode + ", versionInfo="
-                + versionInfo.getCurrentVersionString()+"/"+versionInfo.getReferenceVersionString() + ", stopped=" + stopped + ", machine=" + machine + "]";
+                + versionDescription + ", stopped=" + stopped + ", machine=" + machine + "]";
     }
 
     public String getCurrentVersion() {
-        return versionInfo.getCurrentVersionString();
+        return versionInfo == null ? "unknown" : versionInfo.getCurrentVersionString();
     }
 
     public String getReferenceVersion() {
-        return versionInfo.getReferenceVersionString();
+        return versionInfo == null ? "unknown" : versionInfo.getReferenceVersionString();
     }
 
     public String getDeploymentVersion() {
@@ -74,7 +76,7 @@ public class App implements Comparable<App> {
     }
 
     public boolean isUpdateRequired() {
-        return versionInfo == null || versionInfo.getComparison() < 0;
+        return versionInfo != null && versionInfo.getComparison() != null && versionInfo.getComparison() < 0;
     }
 
     public VersionInfo getVersionInfo() {

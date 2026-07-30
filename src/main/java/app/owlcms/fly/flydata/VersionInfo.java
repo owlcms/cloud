@@ -52,13 +52,25 @@ public class VersionInfo {
 	}
 
 	public VersionInfo(String currentVersionString, String apiUrl, String... fallbackReleaseUrls) {
+		this(currentVersionString, apiUrl, true, fallbackReleaseUrls);
+	}
+
+	public VersionInfo(String currentVersionString, String apiUrl, boolean fetchReferenceVersion,
+			String... fallbackReleaseUrls) {
 		this.currentVersionString = currentVersionString;
 		this.apiUrl = apiUrl;
 		this.fallbackReleaseUrls = fallbackReleaseUrls;
-		this.updateReferenceVersionString();
+		if (fetchReferenceVersion) {
+			this.updateReferenceVersionString();
+		}
 	}
 
 	public void updateReferenceVersionString(boolean preRelease) {
+		if (apiUrl == null || apiUrl.isBlank()) {
+			this.referenceVersionString = "unknown";
+			this.comparison = 0;
+			return;
+		}
 		this.referenceVersionString = fastFetchLatestReleaseVersion(apiUrl, fallbackReleaseUrls);
 
 		if (!"latest".equals(currentVersionString)) {
@@ -80,6 +92,10 @@ public class VersionInfo {
 			updateReferenceVersionString();
 		}
 		return referenceVersionString;
+	}
+
+	public String getCachedReferenceVersionString() {
+		return referenceVersionString == null ? "not loaded" : referenceVersionString;
 	}
 
 	public Integer getComparison() {
@@ -182,6 +198,15 @@ public class VersionInfo {
 		}
 	}
 
+	public static List<String> getCachedReleaseVersions(String apiUrl, boolean showPrereleases) {
+		String cacheKey = apiUrl + "|" + showPrereleases;
+		Long cachedTime = releaseCacheTimestamps.get(cacheKey);
+		if (cachedTime == null || System.currentTimeMillis() - cachedTime >= CACHE_EXPIRY_MS) {
+			return List.of();
+		}
+		return releaseCache.getOrDefault(cacheKey, List.of());
+	}
+
 	private static List<String> fetchApiReleaseVersions(String apiUrl, boolean releaseChannelIncludesPrereleases)
 			throws IOException {
 		URL url = URI.create(apiUrl + "?per_page=" + MAX_SELECTOR_VERSIONS).toURL();
@@ -220,6 +245,9 @@ public class VersionInfo {
 	}
 
 	public static String fastFetchLatestReleaseVersion(String apiUrl, String... fallbackReleaseUrls) {
+		if (apiUrl == null || apiUrl.isBlank()) {
+			return "unknown";
+		}
 		if (FORCE_RELEASE_FALLBACK) {
 			List<String> fallbackVersions = fetchFallbackReleaseVersions(false, fallbackReleaseUrls);
 			return fallbackVersions.isEmpty() ? "unknown" : fallbackVersions.get(0);
