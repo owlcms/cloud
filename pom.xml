@@ -138,6 +138,17 @@
 			<version>12.0.4</version>
 		</dependency>
 
+		<!-- The Vaadin 25 BOM manages jakarta.servlet-api to 'provided' scope,
+		which is correct for a WAR deployed to an application server, but wrong
+		for our embedded Jetty fat jar: the API would be missing at runtime and
+		startup fails with NoClassDefFoundError on jakarta/servlet/... classes.
+		Declaring the scope explicitly here overrides the managed scope. -->
+		<dependency>
+			<groupId>jakarta.servlet</groupId>
+			<artifactId>jakarta.servlet-api</artifactId>
+			<scope>compile</scope>
+		</dependency>
+
 		<dependency>
 			<groupId>com.maxmind.geoip2</groupId>
 			<artifactId>geoip2</artifactId>

@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -80,25 +81,38 @@ public class FlyCtlCommands {
 	}
 
 	public void appRestart(App app, App database, UI ui) {
+		String databaseRestartCommand = null;
 		if (app.appType == AppType.OWLCMS && database != null) {
-				String dbMachine = getCurrentMachineId(database.name);
-				if (dbMachine != null && !dbMachine.isEmpty()) {
-					doAppCommand(database, "fly machine restart " + dbMachine + " --app " + database.name, null, ui);
-				}
+			String dbMachine = getCurrentMachineId(database.name);
+			if (dbMachine != null && !dbMachine.isEmpty()) {
+				databaseRestartCommand = "fly machine restart " + dbMachine + " --app " + database.name;
+			}
 		}
-		
+
 		// Get the current machine ID (may have changed since page load)
 		String machineId = getCurrentMachineId(app.name);
-		
 		// If we have a machine ID, restart the machine directly, then clamp to a
 		// single machine in case the app has drifted to 2+ (HA) machines.
 		// Otherwise scale up to exactly one (for suspended/stopped apps).
+		String appRestartCommand;
 		if (machineId != null && !machineId.isEmpty()) {
-			doAppCommand(app, "fly machine restart " + machineId + " --app " + app.name
-					+ " && " + scaleToOne(app), null, ui);
+			appRestartCommand = "fly machine restart " + machineId + " --app " + app.name
+					+ " && " + scaleToOne(app);
 		} else {
-			doAppCommand(app, scaleToOne(app), null, ui);
+			appRestartCommand = scaleToOne(app);
 		}
+
+		int restartCount = databaseRestartCommand == null ? 1 : 2;
+		AtomicInteger successfulRestarts = new AtomicInteger(restartCount);
+		Runnable closeWhenAllRestartsSucceed = () -> {
+			if (successfulRestarts.decrementAndGet() == 0 && logDialog != null) {
+				logDialog.hide();
+			}
+		};
+		if (databaseRestartCommand != null) {
+			doAppCommand(database, databaseRestartCommand, closeWhenAllRestartsSucceed, ui);
+		}
+		doAppCommand(app, appRestartCommand, closeWhenAllRestartsSucceed, ui);
 	}
 
 	public void configureTrackerConnection(App tracker, App owlcms, String sharedKey, Runnable callback) {
@@ -851,11 +865,14 @@ public class FlyCtlCommands {
 		executorService.submit(streamGobbler2);
 
 		// wait for the command to finish
-		process.waitFor();
+		int exitCode = process.waitFor();
 
 		// wait for the streams to be drained
 		executorService.shutdown();
 		executorService.awaitTermination(5, TimeUnit.SECONDS);
+		if (exitCode != 0) {
+			throw new IOException("Command exited with status " + exitCode);
+		}
 
 		// run the callback
 		if (callback != null) {
