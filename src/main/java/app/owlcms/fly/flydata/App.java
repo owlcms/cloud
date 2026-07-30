@@ -21,7 +21,7 @@ public class App implements Comparable<App> {
         this.appType = appType;
         this.regionCode = region;
         if (appType != null && appType.releaseApiUrl != null && !appType.releaseApiUrl.isBlank()) {
-            this.versionInfo = new VersionInfo(version, appType.releaseApiUrl);
+            this.versionInfo = new VersionInfo(version, appType.releaseApiUrl, appType.fallbackReleaseUrls);
         } else {
             this.versionInfo = new VersionInfo(version);
         }

@@ -12,6 +12,7 @@ import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 
+import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.html.Anchor;
@@ -380,7 +381,23 @@ public class AppsView extends VerticalLayout {
 		details.setSpacing(false);
 		details.setWidth(APP_DETAILS_WIDTH);
 
-		ComboBox<String> versionSelector = createVersionSelector(app, "Version to install");
+		ComboBox<String> versionSelector = new ComboBox<>("Version to install");
+		versionSelector.setWidth("20em");
+		List<String> stableVersions = getSelectableVersions(app, false);
+		String defaultVersion = stableVersions.isEmpty() ? app.getReferenceVersion() : stableVersions.get(0);
+		versionSelector.setItems(stableVersions.isEmpty() ? List.of(defaultVersion) : stableVersions);
+		versionSelector.setValue(defaultVersion);
+		Checkbox showPrereleases = new Checkbox("Show Prereleases");
+		showPrereleases.addValueChangeListener(event -> {
+			List<String> versions = getSelectableVersions(app, event.getValue());
+			String selectedVersion = versions.isEmpty() ? app.getReferenceVersion() : versions.get(0);
+			versionSelector.setItems(versions.isEmpty() ? List.of(selectedVersion) : versions);
+			versionSelector.setValue(selectedVersion);
+		});
+		VerticalLayout versionControls = new VerticalLayout(versionSelector, showPrereleases);
+		versionControls.setMargin(false);
+		versionControls.setPadding(false);
+		versionControls.setSpacing(false);
 
 		TextField nameField = new TextField("Application Name (without .fly.dev)");
 		nameField.setAllowedCharPattern("[A-Za-z0-9-]");
@@ -432,7 +449,7 @@ public class AppsView extends VerticalLayout {
 						}
 					}
 				});
-		HorizontalLayout deploymentControls = new HorizontalLayout(versionSelector, creationButton);
+		HorizontalLayout deploymentControls = new HorizontalLayout(versionControls, creationButton);
 		deploymentControls.setMargin(false);
 		deploymentControls.setPadding(false);
 		deploymentControls.setAlignItems(Alignment.END);
@@ -481,9 +498,23 @@ public class AppsView extends VerticalLayout {
 		rightControls.setPadding(false);
 		rightControls.setSpacing(false);
 		rightControls.setWidth(APP_CONTROLS_WIDTH);
-		ComboBox<String> versionSelector = createVersionSelector(app, "Version to install");
+		ComboBox<String> versionSelector = new ComboBox<>("Version to install");
 		versionSelector.setWidth("10em");
-		versionSelector.setValue(latestVersion);
+		List<String> stableVersions = getSelectableVersions(app, false);
+		String defaultVersion = stableVersions.isEmpty() ? app.getReferenceVersion() : stableVersions.get(0);
+		versionSelector.setItems(stableVersions.isEmpty() ? List.of(defaultVersion) : stableVersions);
+		versionSelector.setValue(defaultVersion);
+		Checkbox showPrereleases = new Checkbox("Show Prereleases");
+		showPrereleases.addValueChangeListener(event -> {
+			List<String> versions = getSelectableVersions(app, event.getValue());
+			String selectedVersion = versions.isEmpty() ? app.getReferenceVersion() : versions.get(0);
+			versionSelector.setItems(versions.isEmpty() ? List.of(selectedVersion) : versions);
+			versionSelector.setValue(selectedVersion);
+		});
+		VerticalLayout versionControls = new VerticalLayout(versionSelector, showPrereleases);
+		versionControls.setMargin(false);
+		versionControls.setPadding(false);
+		versionControls.setSpacing(false);
 
 		HorizontalLayout actionControls = new HorizontalLayout();
 		actionControls.setMargin(false);
@@ -529,7 +560,7 @@ public class AppsView extends VerticalLayout {
 			});
 			actionControls.add(stopButton);
 		}
-		HorizontalLayout deploymentControls = new HorizontalLayout(versionSelector, actionControls);
+		HorizontalLayout deploymentControls = new HorizontalLayout(versionControls, actionControls);
 		deploymentControls.setMargin(false);
 		deploymentControls.setPadding(false);
 		deploymentControls.setAlignItems(Alignment.END);
@@ -683,18 +714,9 @@ public class AppsView extends VerticalLayout {
 				.filter(candidate -> candidate.name.equals(app.name + "-db")).findFirst().orElse(null);
 	}
 
-	private ComboBox<String> createVersionSelector(App app, String label) {
-		ComboBox<String> versionSelector = new ComboBox<>(label);
-		versionSelector.setWidth("20em");
-		List<String> versions = VersionInfo.fetchReleaseVersions(app.appType.releaseApiUrl);
-		String defaultVersion = app.getReferenceVersion();
-		if (versions.isEmpty()) {
-			versionSelector.setItems(defaultVersion);
-		} else {
-			versionSelector.setItems(versions);
-		}
-		versionSelector.setValue(defaultVersion);
-		return versionSelector;
+	private List<String> getSelectableVersions(App app, boolean showPrereleases) {
+		return VersionInfo.fetchReleaseVersions(app.appType.releaseApiUrl, app.appType.preReleaseApiUrl,
+				showPrereleases, app.appType.fallbackReleaseUrls);
 	}
 
 	private String getRegionCode(List<App> appList) {
@@ -729,13 +751,15 @@ public class AppsView extends VerticalLayout {
 		return switch (appType) {
 			case TRACKER -> {
 				if (cachedTrackerVersion == null) {
-					cachedTrackerVersion = VersionInfo.fastFetchLatestReleaseVersion(appType.releaseApiUrl);
+					cachedTrackerVersion = VersionInfo.fastFetchLatestReleaseVersion(appType.releaseApiUrl,
+							appType.fallbackReleaseUrls);
 				}
 				yield cachedTrackerVersion;
 			}
 			default -> {
 				if (cachedOwlcmsVersion == null) {
-					cachedOwlcmsVersion = VersionInfo.fastFetchLatestReleaseVersion(appType.releaseApiUrl);
+					cachedOwlcmsVersion = VersionInfo.fastFetchLatestReleaseVersion(appType.releaseApiUrl,
+							appType.fallbackReleaseUrls);
 				}
 				yield cachedOwlcmsVersion;
 			}

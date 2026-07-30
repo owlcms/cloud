@@ -7,6 +7,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Scanner;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,32 +25,41 @@ public class VersionInfo {
 	private String referenceVersionString;
 	private String currentVersionString;
 	private String apiUrl;
+	private String[] fallbackReleaseUrls;
 	final private static Logger logger = (Logger) LoggerFactory.getLogger(VersionInfo.class);
 	private Integer comparison;
 	
-	// Static cache to avoid repeated fetches for the same API URL (expires after 2 minutes)
+	// Static cache shared by all users of this Fly instance. GitHub's unauthenticated
+	// API rate limit is 60 requests/hour, so release metadata must be refreshed sparingly.
 	private static final ConcurrentHashMap<String, String> versionCache = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Long> cacheTimestamps = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, List<String>> releaseCache = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Long> releaseCacheTimestamps = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Boolean> inFlightFetches = new ConcurrentHashMap<>();
-	private static final long CACHE_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes (GitHub allows 60 requests/hour)
+	private static final long CACHE_EXPIRY_MS = 60 * 60 * 1000;
 	private static final int FETCH_ATTEMPTS = 2;
 	private static final int FETCH_TIMEOUT_MS = 5000;
 	private static final long RETRY_DELAY_MS = 500;
+	private static final boolean FORCE_RELEASE_FALLBACK = false;
+	private static final int MAX_SELECTOR_VERSIONS = 30;
 
 	public VersionInfo(String currentVersionString) {
 		this(currentVersionString, "https://api.github.com/repos/owlcms/owlcms4/releases");
 	}
 
 	public VersionInfo(String currentVersionString, String apiUrl) {
+		this(currentVersionString, apiUrl, new String[0]);
+	}
+
+	public VersionInfo(String currentVersionString, String apiUrl, String... fallbackReleaseUrls) {
 		this.currentVersionString = currentVersionString;
 		this.apiUrl = apiUrl;
+		this.fallbackReleaseUrls = fallbackReleaseUrls;
 		this.updateReferenceVersionString();
 	}
 
 	public void updateReferenceVersionString(boolean preRelease) {
-		this.referenceVersionString = fastFetchLatestReleaseVersion(apiUrl);
+		this.referenceVersionString = fastFetchLatestReleaseVersion(apiUrl, fallbackReleaseUrls);
 
 		if (!"latest".equals(currentVersionString)) {
 			ComparableVersion currentVersion = new ComparableVersion(this.currentVersionString);
@@ -135,49 +145,85 @@ public class VersionInfo {
 	}
 
 	public static List<String> fetchReleaseVersions(String apiUrl) {
-		Long cachedTime = releaseCacheTimestamps.get(apiUrl);
+		return fetchReleaseVersions(apiUrl, new String[0]);
+	}
+
+	public static List<String> fetchReleaseVersions(String apiUrl, String... fallbackReleaseUrls) {
+		return fetchReleaseVersions(apiUrl, null, false, fallbackReleaseUrls);
+	}
+
+	public static List<String> fetchReleaseVersions(String apiUrl, String preReleaseApiUrl,
+			boolean showPrereleases, String... fallbackReleaseUrls) {
+		if (FORCE_RELEASE_FALLBACK) {
+			return fetchFallbackReleaseVersions(showPrereleases, fallbackReleaseUrls);
+		}
+		String cacheKey = apiUrl + "|" + showPrereleases;
+		Long cachedTime = releaseCacheTimestamps.get(cacheKey);
 		if (cachedTime != null && (System.currentTimeMillis() - cachedTime) < CACHE_EXPIRY_MS) {
-			return releaseCache.get(apiUrl);
+			return releaseCache.get(cacheKey);
 		}
 
 		try {
-			URL url = URI.create(apiUrl + "?per_page=100").toURL();
-			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-			conn.setConnectTimeout(FETCH_TIMEOUT_MS);
-			conn.setReadTimeout(FETCH_TIMEOUT_MS);
-			conn.setRequestMethod("GET");
-			conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
-			if (conn.getResponseCode() != 200) {
-				return List.of();
+			List<String> stableVersions = fetchApiReleaseVersions(apiUrl, false);
+			List<String> versions = new ArrayList<>(stableVersions);
+			if (showPrereleases && preReleaseApiUrl != null) {
+				List<String> prereleaseVersions = fetchApiReleaseVersions(preReleaseApiUrl, true);
+				versions.addAll(prereleaseVersions);
+				logger.info("Fetched {} stable and {} prerelease versions", stableVersions.size(),
+						prereleaseVersions.size());
 			}
-
-			Scanner scanner = new Scanner(conn.getInputStream());
-			StringBuilder response = new StringBuilder();
-			while (scanner.hasNextLine()) {
-				response.append(scanner.nextLine());
-			}
-			scanner.close();
-
-			List<String> versions = new ArrayList<>();
-			JsonParser parser = new JsonParser();
-			parser.parse(response.toString()).getAsJsonArray().forEach(release -> {
-				JsonObject releaseObject = release.getAsJsonObject();
-				if (!releaseObject.get("draft").getAsBoolean()) {
-					versions.add(releaseObject.get("tag_name").getAsString());
-				}
-			});
-			versions.sort((left, right) -> new ComparableVersion(right).compareTo(new ComparableVersion(left)));
-			List<String> result = List.copyOf(versions);
-			releaseCache.put(apiUrl, result);
-			releaseCacheTimestamps.put(apiUrl, System.currentTimeMillis());
+			List<String> result = limitSelectorVersions(filterCloudAlphaVersions(orderVersions(versions)));
+			releaseCache.put(cacheKey, result);
+			releaseCacheTimestamps.put(cacheKey, System.currentTimeMillis());
 			return result;
 		} catch (Exception e) {
-			logger.debug("Unable to fetch releases from {}: {}", apiUrl, e.getMessage());
-			return List.of();
+			logger.warn("Unable to fetch releases from {}: {}", apiUrl, e.getMessage());
+			return releaseCache.getOrDefault(cacheKey, fetchFallbackReleaseVersions(showPrereleases, fallbackReleaseUrls));
 		}
 	}
 
+	private static List<String> fetchApiReleaseVersions(String apiUrl, boolean releaseChannelIncludesPrereleases)
+			throws IOException {
+		URL url = URI.create(apiUrl + "?per_page=" + MAX_SELECTOR_VERSIONS).toURL();
+		HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+		conn.setConnectTimeout(FETCH_TIMEOUT_MS);
+		conn.setReadTimeout(FETCH_TIMEOUT_MS);
+		conn.setRequestMethod("GET");
+		conn.setRequestProperty("Accept", "application/vnd.github.v3+json");
+		if (conn.getResponseCode() != 200) {
+			throw new IOException("HTTP " + conn.getResponseCode() + " (rate limit remaining: "
+					+ conn.getHeaderField("X-RateLimit-Remaining") + ")");
+		}
+
+		Scanner scanner = new Scanner(conn.getInputStream());
+		StringBuilder response = new StringBuilder();
+		while (scanner.hasNextLine()) {
+			response.append(scanner.nextLine());
+		}
+		scanner.close();
+
+		List<String> versions = new ArrayList<>();
+		JsonParser parser = new JsonParser();
+		parser.parse(response.toString()).getAsJsonArray().forEach(release -> {
+			JsonObject releaseObject = release.getAsJsonObject();
+			boolean isPrerelease = releaseObject.get("prerelease").getAsBoolean();
+			if (!releaseObject.get("draft").getAsBoolean()
+					&& (releaseChannelIncludesPrereleases || !isPrerelease)) {
+				versions.add(releaseObject.get("tag_name").getAsString());
+			}
+		});
+		return versions;
+	}
+
 	public static String fastFetchLatestReleaseVersion(String apiUrl) {
+		return fastFetchLatestReleaseVersion(apiUrl, new String[0]);
+	}
+
+	public static String fastFetchLatestReleaseVersion(String apiUrl, String... fallbackReleaseUrls) {
+		if (FORCE_RELEASE_FALLBACK) {
+			List<String> fallbackVersions = fetchFallbackReleaseVersions(false, fallbackReleaseUrls);
+			return fallbackVersions.isEmpty() ? "unknown" : fallbackVersions.get(0);
+		}
 		Long cachedTime = cacheTimestamps.get(apiUrl);
 		if (cachedTime != null && (System.currentTimeMillis() - cachedTime) < CACHE_EXPIRY_MS) {
 			return versionCache.get(apiUrl);
@@ -190,8 +236,8 @@ public class VersionInfo {
 						cachedVersion);
 				return cachedVersion;
 			}
-			logger.debug("Version fetch already in progress for {}, returning unknown", apiUrl);
-			return "unknown";
+			List<String> fallbackVersions = fetchFallbackReleaseVersions(false, fallbackReleaseUrls);
+			return fallbackVersions.isEmpty() ? "unknown" : fallbackVersions.get(0);
 		}
 
 		try {
@@ -242,10 +288,90 @@ public class VersionInfo {
 				}
 			}
 
-			logger.debug("No version found after {} attempts for {}, returning unknown", FETCH_ATTEMPTS, apiUrl);
+			String cachedVersion = versionCache.get(apiUrl);
+			if (cachedVersion != null) {
+				logger.warn("Unable to refresh latest release from {}; keeping cached version {}", apiUrl,
+						cachedVersion);
+				return cachedVersion;
+			}
+			List<String> fallbackVersions = fetchFallbackReleaseVersions(false, fallbackReleaseUrls);
+			if (!fallbackVersions.isEmpty()) {
+				String fallbackVersion = fallbackVersions.get(0);
+				logger.warn("Unable to refresh latest release from {}; using fallback version {}", apiUrl,
+						fallbackVersion);
+				versionCache.put(apiUrl, fallbackVersion);
+				cacheTimestamps.put(apiUrl, System.currentTimeMillis());
+				return fallbackVersion;
+			}
+			logger.warn("No version found after {} attempts for {}, returning unknown", FETCH_ATTEMPTS, apiUrl);
 			return "unknown";
 		} finally {
 			inFlightFetches.remove(apiUrl);
 		}
+	}
+
+	private static List<String> fetchFallbackReleaseVersions(boolean includePrereleases, String... fallbackReleaseUrls) {
+		List<String> versions = new ArrayList<>();
+		for (String fallbackReleaseUrl : fallbackReleaseUrls) {
+			try {
+				HttpURLConnection conn = (HttpURLConnection) URI.create(fallbackReleaseUrl).toURL().openConnection();
+				conn.setConnectTimeout(FETCH_TIMEOUT_MS);
+				conn.setReadTimeout(FETCH_TIMEOUT_MS);
+				conn.setInstanceFollowRedirects(false);
+				conn.setRequestMethod("GET");
+				int status = conn.getResponseCode();
+				if (status >= 300 && status < 400) {
+					String location = conn.getHeaderField("Location");
+					String version = extractReleaseVersion(location);
+					if (version != null && (includePrereleases || isStableVersion(version))) {
+						versions.add(version);
+					}
+				} else {
+					logger.warn("Unable to fetch fallback release from {}: HTTP {}", fallbackReleaseUrl, status);
+				}
+			} catch (Exception e) {
+				logger.warn("Unable to fetch fallback release from {}: {}", fallbackReleaseUrl, e.getMessage());
+			}
+		}
+		return filterCloudAlphaVersions(orderVersions(versions));
+	}
+
+	private static String extractReleaseVersion(String location) {
+		if (location == null) {
+			return null;
+		}
+		int tagStart = location.indexOf("/releases/tag/");
+		if (tagStart < 0) {
+			return null;
+		}
+		String version = location.substring(tagStart + "/releases/tag/".length());
+		int queryStart = version.indexOf('?');
+		return queryStart < 0 ? version : version.substring(0, queryStart);
+	}
+
+	private static List<String> orderVersions(List<String> versions) {
+		List<String> ordered = new ArrayList<>(new LinkedHashSet<>(versions));
+		ordered.sort((left, right) -> new ComparableVersion(right).compareTo(new ComparableVersion(left)));
+		ordered.stream().filter(VersionInfo::isStableVersion).findFirst().ifPresent(stableVersion -> {
+			ordered.remove(stableVersion);
+			ordered.add(0, stableVersion);
+		});
+		return List.copyOf(ordered);
+	}
+
+	private static List<String> limitSelectorVersions(List<String> versions) {
+		return versions.size() <= MAX_SELECTOR_VERSIONS ? versions
+				: List.copyOf(versions.subList(0, MAX_SELECTOR_VERSIONS));
+	}
+
+	private static List<String> filterCloudAlphaVersions(List<String> versions) {
+		if (System.getenv("FLY_APP_NAME") == null) {
+			return versions;
+		}
+		return versions.stream().filter(version -> !version.contains("-alpha")).toList();
+	}
+
+	private static boolean isStableVersion(String version) {
+		return !version.contains("-");
 	}
 }

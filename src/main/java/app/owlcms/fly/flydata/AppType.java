@@ -4,16 +4,25 @@ import java.util.HashMap;
 import java.util.Map;
 
 public enum AppType {
-    OWLCMS("owlcms/owlcms", "scripts/createOwlcms.sh", "https://api.github.com/repos/owlcms/owlcms4/releases", "owlcms.toml"),
+    OWLCMS("owlcms/owlcms", "scripts/createOwlcms.sh", "https://api.github.com/repos/owlcms/releases/releases",
+            "https://api.github.com/repos/owlcms/prereleases/releases", "owlcms.toml",
+            "https://github.com/owlcms/releases/releases/latest",
+        "https://github.com/owlcms/prereleases/releases/latest"),
     PUBLICRESULTS("owlcms/publicresults", "scripts/createPublicResults.sh",
-            "https://api.github.com/repos/owlcms/owlcms4/releases", "publicresults.toml"),
-    TRACKER("owlcms/tracker", "scripts/createTracker.sh", "https://api.github.com/repos/owlcms/tracker/releases", "tracker.toml"),
-    DB("flyio/postgres-flex", null, null, null);
+            "https://api.github.com/repos/owlcms/releases/releases",
+            "https://api.github.com/repos/owlcms/prereleases/releases", "publicresults.toml",
+        "https://github.com/owlcms/releases/releases/latest",
+        "https://github.com/owlcms/prereleases/releases/latest"),
+    TRACKER("owlcms/tracker", "scripts/createTracker.sh", "https://api.github.com/repos/owlcms/tracker/releases",
+            null, "tracker.toml", "https://github.com/owlcms/tracker/releases/latest"),
+    DB("flyio/postgres-flex", null, null, null, null);
 
     public final String image;
     public final String create;
     public final String releaseApiUrl;
+    public final String preReleaseApiUrl;
     public final String configFile;
+    public final String[] fallbackReleaseUrls;
 
     private static final Map<String, AppType> BY_IMAGE = new HashMap<>();
     static {
@@ -22,11 +31,14 @@ public enum AppType {
         }
     }
 
-    private AppType(String image, String create, String releaseApiUrl, String configFile) {
+    private AppType(String image, String create, String releaseApiUrl, String preReleaseApiUrl, String configFile,
+            String... fallbackReleaseUrls) {
         this.image = image;
         this.create = create;
         this.releaseApiUrl = releaseApiUrl;
+        this.preReleaseApiUrl = preReleaseApiUrl;
         this.configFile = configFile;
+        this.fallbackReleaseUrls = fallbackReleaseUrls;
     }
 
     public String getConfigFile() {
