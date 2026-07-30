@@ -1,6 +1,9 @@
 # flyctl launch added from .gitignore
 target
 
+# Git metadata is never needed in the image and is ~37MB of build context
+.git
+
 # IDEA
 **/.idea
 **/*.iml

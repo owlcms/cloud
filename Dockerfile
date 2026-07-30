@@ -44,4 +44,6 @@ COPY --from=stage1 /app/*.toml /app/
 COPY --from=stage1 /usr/bin/envsubst /usr/bin
 COPY --from=stage1 /app/src/main/resources/GeoLite2/GeoLite2-City.mmdb /app
 EXPOSE 8080
-ENTRYPOINT ["/opt/java/openjdk/bin/java", "-jar", "fly-manager.jar", "-Xmx384m"]
+# No explicit -Xmx: the JVM sizes the heap from the machine's memory
+# (MaxRAMPercentage=25 of the 512MB in owlcms-cloud.toml, so ~128MB).
+ENTRYPOINT ["/opt/java/openjdk/bin/java", "-jar", "fly-manager.jar"]

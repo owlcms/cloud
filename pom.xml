@@ -346,6 +346,10 @@
 												<exclude>com.vaadin:vaadin-dev</exclude>
 												<exclude>
 													com.vaadin:vaadin-dev-server</exclude>
+												<!-- The container reads /app/GeoLite2-City.mmdb from disk
+													(see Dockerfile and GeoLocator); the classpath copy is
+													never opened there and only bloats the shaded jar. -->
+												<exclude>GeoLite2/**</exclude>
 											</excludes>
 										</filter>
 									</filters>

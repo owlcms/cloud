@@ -1,3 +1,6 @@
+New in 2.0.0
+- Lauch multiple OWLCMS and multiple trackers, connect them pairwise to each other
+
 New in 1.8.3
 - Available version number fetch retries -- initial fetch from github occasionally fails
 
