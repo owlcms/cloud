@@ -31,3 +31,7 @@ logs/owlcms.log
 out.err
 out.txt
 string.txt
+
+# flyctl rewrites the --config temp file using a path relative to the CWD,
+# which drops the leading slash of $(mktemp) output and lands it here.
+/var/
