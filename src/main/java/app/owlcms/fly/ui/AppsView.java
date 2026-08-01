@@ -684,7 +684,7 @@ public class AppsView extends VerticalLayout {
 	}
 
 	private VerticalLayout createVersionControls(App app, UI ui, ComboBox<String> versionSelector) {
-		setSelectableVersions(versionSelector, getCachedSelectableVersions(app, false), app.getCurrentVersion());
+		setSelectableVersions(versionSelector, getCachedSelectableVersions(app, false), app.getCurrentVersion(), false);
 		Checkbox showPrereleases = new Checkbox("Show Prereleases");
 		showPrereleases.addValueChangeListener(event -> loadSelectableVersions(app, event.getValue(), versionSelector,
 				showPrereleases, ui));
@@ -704,7 +704,7 @@ public class AppsView extends VerticalLayout {
 			List<String> versions = getCachedSelectableVersions(app, showPrereleases);
 			ui.access(() -> {
 				if (showPrereleasesCheckbox.getValue() == showPrereleases) {
-					setSelectableVersions(versionSelector, versions, app.getCurrentVersion());
+					setSelectableVersions(versionSelector, versions, app.getCurrentVersion(), showPrereleases);
 				}
 				versionSelector.setEnabled(true);
 			});
@@ -716,10 +716,15 @@ public class AppsView extends VerticalLayout {
 	}
 
 	private void setSelectableVersions(ComboBox<String> versionSelector, List<String> versions,
-			String fallbackVersion) {
-		String selectedVersion = versions.isEmpty() ? fallbackVersion : versions.get(0);
-		versionSelector.setItems(versions.isEmpty() ? List.of(selectedVersion) : versions);
-		versionSelector.setValue(selectedVersion);
+			String fallbackVersion, boolean showPrereleases) {
+		// only fall back to the installed version when it matches the requested channel,
+		// so a prerelease never appears in the selector while "Show Prereleases" is off
+		boolean fallbackUsable = fallbackVersion != null
+				&& (showPrereleases || !fallbackVersion.contains("-"));
+		List<String> effectiveVersions = !versions.isEmpty() ? versions
+				: (fallbackUsable ? List.of(fallbackVersion) : List.of());
+		versionSelector.setItems(effectiveVersions);
+		versionSelector.setValue(effectiveVersions.isEmpty() ? null : effectiveVersions.get(0));
 	}
 
 	private void preloadStableVersions() {
