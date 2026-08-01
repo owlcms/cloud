@@ -194,7 +194,16 @@ public class VersionInfo {
 			return result;
 		} catch (Exception e) {
 			logger.warn("Unable to fetch releases from {}: {}", apiUrl, e.getMessage());
-			return releaseCache.getOrDefault(cacheKey, fetchFallbackReleaseVersions(showPrereleases, fallbackReleaseUrls));
+			List<String> cached = releaseCache.get(cacheKey);
+			if (cached != null) {
+				return cached;
+			}
+			// cache the fallback too, otherwise getCachedReleaseVersions() keeps returning empty
+			// until the rate limit resets, since nothing was ever stored in releaseCache
+			List<String> fallback = fetchFallbackReleaseVersions(showPrereleases, fallbackReleaseUrls);
+			releaseCache.put(cacheKey, fallback);
+			releaseCacheTimestamps.put(cacheKey, System.currentTimeMillis());
+			return fallback;
 		}
 	}
 
