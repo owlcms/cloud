@@ -664,6 +664,11 @@ public class AppsView extends VerticalLayout {
 			boolean showExplanation = appType != AppType.OWLCMS || index == 0;
 			section.add(showApplication(app, findDatabase(app, appList), appList, showExplanation, index == 0));
 		}
+		if (appsOfType.isEmpty()) {
+			// nothing created yet: start with an empty creation row, as if "Add Another" had been clicked
+			App newApp = new App("", appType, getCurrentRegion(), "stable", null, null);
+			section.add(showApplication(newApp, null, appList, true, true));
+		}
 
 		Button addButton = new Button("+ Add Another", event -> {
 			App newApp = new App("", appType, getCurrentRegion(), "stable", null, null);

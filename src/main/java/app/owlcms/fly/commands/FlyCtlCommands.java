@@ -768,7 +768,9 @@ public class FlyCtlCommands {
 		setReason("");
 		appNameStatus = 0;
 		try {
-			String commandString = "flyctl apps list --json | jq -r '.[].ID'";
+			// restrict to the org where createApp() puts new apps, so that apps belonging
+			// to other organizations the account is a member of are not shown
+			String commandString = "flyctl apps list --org personal --json | jq -r '.[].ID'";
 			Consumer<String> outputConsumer = (string) -> {
 				if (!string.contains("builder")) {
 					appNames.add(string);
