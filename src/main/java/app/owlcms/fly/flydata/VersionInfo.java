@@ -182,8 +182,9 @@ public class VersionInfo {
 		try {
 			List<String> stableVersions = fetchApiReleaseVersions(apiUrl, false);
 			List<String> versions = new ArrayList<>(stableVersions);
-			if (showPrereleases && preReleaseApiUrl != null) {
-				List<String> prereleaseVersions = fetchApiReleaseVersions(preReleaseApiUrl, true);
+			if (showPrereleases) {
+				String prereleaseSource = preReleaseApiUrl != null ? preReleaseApiUrl : apiUrl;
+				List<String> prereleaseVersions = fetchApiReleaseVersions(prereleaseSource, true);
 				versions.addAll(prereleaseVersions);
 				logger.info("Fetched {} stable and {} prerelease versions", stableVersions.size(),
 						prereleaseVersions.size());
