@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -53,18 +52,27 @@ public class FlyCtlCommands {
 		doAppCommand(app, app.appType.create, callback, null);
 	}
 
-	public void appDeploy(App app, Runnable callback) {
+	public void appDeploy(App app, App database, Runnable callback) {
 		String deploymentVersion = app.getDeploymentVersion();
-		String configFile = app.appType.getConfigFile();
-		// Strictly enforce a SINGLE machine: --ha=false prevents Fly from
-		// auto-creating a second (HA) machine on a fresh launch, and the chained
-		// `scale count 1` clamps any app that has already drifted to 2+ machines
-		// back down to exactly one. The in-memory hub requires a single instance.
-		doAppCommand(app,
-				"fly deploy --app " + app.name + " --image " + app.appType.image + ":" + deploymentVersion
-						+ " --ha=false --config " + configFile
-						+ " && " + scaleToOne(app),
-				callback, null);
+		String configTemplate = shellQuote(app.appType.getConfigFile());
+		String stopBeforeDeploy = app.appType == AppType.OWLCMS
+				? "fly scale count 0 --yes --app " + app.name
+				: "";
+		String deployOptions = app.appType == AppType.OWLCMS ? "--ha=false --update-only" : "--ha=false";
+		String scaleAfterDeploy = app.appType == AppType.OWLCMS
+				? "fly scale count 0 --yes --app " + app.name
+				: scaleToOne(app);
+		String command = """
+				set -e
+				%1$s
+				config_file=$(mktemp)
+				trap 'rm -f "$config_file"' EXIT
+				envsubst < %2$s > "$config_file"
+				fly deploy --app %3$s --image %4$s:%5$s %6$s --config "$config_file"
+				%7$s
+				""".formatted(stopBeforeDeploy, configTemplate, app.name, app.appType.image, deploymentVersion,
+				deployOptions, scaleAfterDeploy);
+		doAppCommand(app, command, callback, null);
 	}
 
 	public void appDestroy(App app, Runnable callback) {
@@ -76,43 +84,38 @@ public class FlyCtlCommands {
 		doAppCommand(app, "fly scale count 0 --yes --app " + app.name, callback, null);
 	}
 
+	public void appStop(App app, App database, Runnable callback) {
+		if (app.appType != AppType.OWLCMS || database == null) {
+			appStop(app, callback);
+			return;
+		}
+
+		String command = "set -e\n"
+				+ "fly scale count 0 --yes --app " + app.name + "\n"
+				+ stopDatabaseMachines(database);
+		doAppCommand(app, command, callback, null);
+	}
+
 	public void appRestart(App app, App database) {
 		appRestart(app, database, null);
 	}
 
-	public void appRestart(App app, App database, UI ui) {
-		String databaseRestartCommand = null;
+	public void appStart(App app, App database, Runnable callback) {
+		String command = "set -e\n";
 		if (app.appType == AppType.OWLCMS && database != null) {
-			String dbMachine = getCurrentMachineId(database.name);
-			if (dbMachine != null && !dbMachine.isEmpty()) {
-				databaseRestartCommand = "fly machine restart " + dbMachine + " --app " + database.name;
-			}
+			command += startDatabaseMachines(database, false);
 		}
+		command += scaleToOne(app);
+		doAppCommand(app, command, callback, null);
+	}
 
-		// Get the current machine ID (may have changed since page load)
-		String machineId = getCurrentMachineId(app.name);
-		// If we have a machine ID, restart the machine directly, then clamp to a
-		// single machine in case the app has drifted to 2+ (HA) machines.
-		// Otherwise scale up to exactly one (for suspended/stopped apps).
-		String appRestartCommand;
-		if (machineId != null && !machineId.isEmpty()) {
-			appRestartCommand = "fly machine restart " + machineId + " --app " + app.name
-					+ " && " + scaleToOne(app);
-		} else {
-			appRestartCommand = scaleToOne(app);
+	public void appRestart(App app, App database, Runnable callback) {
+		String command = "set -e\n";
+		if (app.appType == AppType.OWLCMS && database != null) {
+			command += startDatabaseMachines(database, true);
 		}
-
-		int restartCount = databaseRestartCommand == null ? 1 : 2;
-		AtomicInteger successfulRestarts = new AtomicInteger(restartCount);
-		Runnable closeWhenAllRestartsSucceed = () -> {
-			if (successfulRestarts.decrementAndGet() == 0 && logDialog != null) {
-				logDialog.hide();
-			}
-		};
-		if (databaseRestartCommand != null) {
-			doAppCommand(database, databaseRestartCommand, closeWhenAllRestartsSucceed, ui);
-		}
-		doAppCommand(app, appRestartCommand, closeWhenAllRestartsSucceed, ui);
+		command += restartOrScaleToOne(app);
+		doAppCommand(app, command, callback != null ? callback : logDialog != null ? logDialog::hide : null, null);
 	}
 
 	public void configureTrackerConnection(App tracker, App owlcms, String sharedKey, Runnable callback) {
@@ -168,31 +171,59 @@ public class FlyCtlCommands {
 		return "fly scale count 1 --yes --app " + app.name;
 	}
 
-	private String shellQuote(String value) {
-		return "'" + value.replace("'", "'\"'\"'") + "'";
+	private String restartOrScaleToOne(App app) {
+		return """
+				app_machine=$(fly machines list --app %1$s --json | jq -r '.[0].id // empty')
+				if [ -n "$app_machine" ]; then
+				    fly machine restart "$app_machine" --app %1$s
+				fi
+				fly scale count 1 --yes --app %1$s
+				""".formatted(app.name);
 	}
 
-	/**
-	 * Get the current machine ID for an app by querying Fly.io
-	 */
-	private String getCurrentMachineId(String appName) {
-		final String[] machineId = {null};
-		try {
-			ProcessBuilder builder = createProcessBuilder(getToken());
-			String commandString = "fly machines list --app " + appName + " --json | jq -r '.[0].id // empty'";
-			Consumer<String> outputConsumer = (string) -> {
-				if (string != null && !string.isBlank() && !string.equals("null")) {
-					machineId[0] = string.trim();
-				}
-			};
-			Consumer<String> errorConsumer = (string) -> {
-				logger.debug("Error getting machine ID for {}: {}", appName, string);
-			};
-			runCommand("getting machine id {}", commandString, outputConsumer, errorConsumer, builder, null);
-		} catch (Exception e) {
-			logger.warn("Failed to get machine ID for {}: {}", appName, e.getMessage());
-		}
-		return machineId[0];
+	// Postgres apps do not support `fly scale`; machines must be driven directly.
+	private String stopDatabaseMachines(App database) {
+		return """
+				for db_machine in $(fly machines list --app %1$s --json | jq -r '.[] | select(.state != "stopped") | .id'); do
+				    fly machine stop "$db_machine" --app %1$s
+				done
+				""".formatted(database.name);
+	}
+
+	private String startDatabaseMachines(App database, boolean restartStarted) {
+		return """
+				db_machines=$(fly machines list --app %1$s --json | jq -r '.[] | "\\(.id) \\(.state)"')
+				if [ -z "$db_machines" ]; then
+				    echo 'No PostgreSQL machine found for %1$s' >&2
+				    exit 1
+				fi
+				echo "$db_machines" | while read -r db_machine db_state; do
+				    if [ "$db_state" = "started" ] && [ "%2$s" = "true" ]; then
+				        fly machine restart "$db_machine" --app %1$s
+				    elif [ "$db_state" != "started" ]; then
+				        fly machine start "$db_machine" --app %1$s
+				    fi
+				    booted=false
+				    for attempt in $(seq 1 60); do
+				        db_state=$(fly machines list --app %1$s --json \
+				                | jq -r --arg machine "$db_machine" \
+				                    '.[] | select(.id == $machine) | .state')
+				        if [ "$db_state" = "started" ]; then
+				            booted=true
+				            break
+				        fi
+				        sleep 2
+				    done
+				    if [ "$booted" != "true" ]; then
+				        echo "PostgreSQL machine $db_machine did not start" >&2
+				        exit 1
+				    fi
+				done
+				""".formatted(database.name, restartStarted);
+	}
+
+	private String shellQuote(String value) {
+		return "'" + value.replace("'", "'\"'\"'") + "'";
 	}
 
 	// private void appSharedSecret(App app) {
@@ -577,8 +608,13 @@ public class FlyCtlCommands {
 				// If no machines found, check if it's a suspended/scaled-to-zero app
 				if (!foundMachine[0]) {
 					logger.debug("No machines found for app: {}, checking if it's suspended or pending", s);
-					// fly config show outputs JSON by default (no --json flag needed)
-					String configCommand = "fly config show --app %s 2>/dev/null | jq -r '[(.build.image // .image // empty), (.primary_region // empty)] | @tsv'".formatted(s);
+					String configCommand = """
+							release_image=$(fly releases --app %1$s --json 2>/dev/null \
+							    | jq -r '[.[] | select(.Status == "complete")][0].ImageRef // empty')
+							fly config show --app %1$s 2>/dev/null \
+							    | jq -r --arg release_image "$release_image" \
+							        '[($release_image | select(length > 0)) // .build.image // .image // empty, .primary_region // empty] | @tsv'
+							""".formatted(s);
 					final String[] imageRef = {null};
 					final String[] regionRef = {""};
 					final boolean[] configFound = {false};
@@ -647,6 +683,15 @@ public class FlyCtlCommands {
 				e.printStackTrace();
 			}
 		}
+		String fallbackRegion = discoveredApps.stream().map(app -> app.regionCode)
+				.filter(region -> region != null && !region.isBlank() && !region.startsWith("$"))
+				.findFirst().orElse(null);
+		discoveredApps.stream().filter(app -> app.regionCode != null && app.regionCode.startsWith("$"))
+				.forEach(app -> app.regionCode = discoveredApps.stream()
+						.filter(candidate -> candidate.appType == AppType.DB)
+						.filter(candidate -> candidate.name.equals(app.name + "-db"))
+						.map(database -> database.regionCode)
+						.findFirst().orElse(fallbackRegion));
 		discoveredApps.stream().filter(app -> app.appType != AppType.DB)
 				.forEach(app -> loadSecretNames(builder, app));
 		return discoveredApps;

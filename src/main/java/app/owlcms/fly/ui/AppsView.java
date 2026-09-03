@@ -3,6 +3,7 @@ package app.owlcms.fly.ui;
 import java.security.SecureRandom;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Hr;
 import com.vaadin.flow.component.html.NativeLabel;
+import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.Notification.Position;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -201,12 +203,11 @@ public class AppsView extends VerticalLayout {
 
 			if (app.appType == AppType.OWLCMS) {
 				if (database != null) {
-				logDialog.append("Suspending OWLCMS " + app.name, UI.getCurrent());
-				flyCommands.appStop(app, null);
-				logDialog.append("Suspending OWLCMS database " + database.name, UI.getCurrent());
-				flyCommands.appStop(database, callback);
-			} else {
-				logDialog.append("Suspending OWLCMS - no database " + app.name, UI.getCurrent());
+					logDialog.append("Suspending OWLCMS " + app.name, UI.getCurrent());
+					logDialog.append("Suspending OWLCMS database " + database.name, UI.getCurrent());
+					flyCommands.appStop(app, database, callback);
+				} else {
+					logDialog.append("Suspending OWLCMS - no database " + app.name, UI.getCurrent());
 					flyCommands.appStop(app, callback);
 				}
 			} else if (app.appType == AppType.TRACKER) {
@@ -449,13 +450,21 @@ public class AppsView extends VerticalLayout {
 		existingLayout.getStyle().set("margin-top", "1em");
 		Anchor a = new Anchor("https://" + app.name + ".fly.dev", app.name + ".fly.dev", AnchorTarget.BLANK);
 		a.getStyle().set("text-decoration", "underline");
+		Span status = new Span(app.stopped ? "Stopped" : "Running");
+		status.getElement().getThemeList().add("badge");
+		status.getElement().getThemeList().add(app.stopped ? "error" : "success");
+		HorizontalLayout applicationHeading = new HorizontalLayout(a, status);
+		applicationHeading.setMargin(false);
+		applicationHeading.setPadding(false);
+		applicationHeading.setSpacing(true);
+		applicationHeading.setAlignItems(Alignment.BASELINE);
 		String websocketUrl = "wss://" + app.name + ".fly.dev/ws";
 		String rawVersion = app.getCurrentVersion();
 		String displayVersion = rawVersion + (rawVersion.matches("^[0-9].*$") ? "" : " (version number unknown)");
 		List<String> stableVersions = getCachedSelectableVersions(app, false);
 		String latestVersion = stableVersions.isEmpty() ? "unknown" : stableVersions.get(0);
 		boolean updateRequired = app.isUpdateRequired();
-		VerticalLayout versionInfo = new VerticalLayout(a);
+		VerticalLayout versionInfo = new VerticalLayout(applicationHeading);
 		if (app.appType == AppType.TRACKER) {
 			versionInfo.add(new NativeLabel("websocket: " + websocketUrl));
 		}
@@ -494,18 +503,25 @@ public class AppsView extends VerticalLayout {
 		Button updateButton = new Button("Update",
 			e -> {
 				app.setDeploymentVersion(versionSelector.getValue());
-				flyCommands.appDeploy(app, () -> doSilentListRefresh(apps, ui));
+				flyCommands.appDeploy(app, database, () -> doSilentListRefresh(apps, ui));
 			});
-		if (updateRequired) {
-			updateButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-		}
+		updateButton.addThemeVariants(ButtonVariant.LUMO_CONTRAST);
+		versionSelector.addValueChangeListener(event ->
+				setUpdateButtonPrimary(updateButton, app.getCurrentVersion(), event.getValue()));
+		setUpdateButtonPrimary(updateButton, app.getCurrentVersion(), versionSelector.getValue());
 		actionControls.add(updateButton);
 
-		Button restartButton = new Button("Restart",
-				e -> {
-					flyCommands.appRestart(app, database);
-			});
-		actionControls.add(restartButton);
+		Button runButton;
+		if (app.stopped) {
+			runButton = new Button("Start",
+					e -> flyCommands.appStart(app, database, () -> doSilentListRefresh(apps, ui)));
+			runButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SUCCESS);
+		} else {
+			runButton = new Button("Restart",
+					e -> flyCommands.appRestart(app, database, () -> doSilentListRefresh(apps, ui)));
+			runButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+		}
+		actionControls.add(runButton);
 
 		ConfirmDialog deletionDialog = buildDeletionDialog(app, database,
 				() -> doListApplications(apps, ui));
@@ -513,7 +529,6 @@ public class AppsView extends VerticalLayout {
 		deleteButton.addClickListener(event -> {
 			deletionDialog.open();
 		});
-		actionControls.add(deleteButton);
 
 		if (!app.stopped) {
 			ConfirmDialog stopDialog = buildStopDialog(app, database,
@@ -525,11 +540,13 @@ public class AppsView extends VerticalLayout {
 						doListApplications(apps, ui);
 					});
 			Button stopButton = new Button("Stop");
+			stopButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_ERROR);
 			stopButton.addClickListener(event -> {
 				stopDialog.open();
 			});
 			actionControls.add(stopButton);
 		}
+		actionControls.add(deleteButton);
 		HorizontalLayout deploymentControls = new HorizontalLayout(versionControls, actionControls);
 		deploymentControls.setMargin(false);
 		deploymentControls.setPadding(false);
@@ -689,15 +706,29 @@ public class AppsView extends VerticalLayout {
 	}
 
 	private VerticalLayout createVersionControls(App app, UI ui, ComboBox<String> versionSelector) {
-		setSelectableVersions(versionSelector, getCachedSelectableVersions(app, false), app.getCurrentVersion(), false);
+		boolean installedPrerelease = app.getCurrentVersion().contains("-");
+		setSelectableVersions(versionSelector, getCachedSelectableVersions(app, installedPrerelease),
+				app.getCurrentVersion(), installedPrerelease);
 		Checkbox showPrereleases = new Checkbox("Show Prereleases");
+		showPrereleases.setValue(installedPrerelease);
 		showPrereleases.addValueChangeListener(event -> loadSelectableVersions(app, event.getValue(), versionSelector,
 				showPrereleases, ui));
+		if (installedPrerelease) {
+			loadSelectableVersions(app, true, versionSelector, showPrereleases, ui);
+		}
 		VerticalLayout versionControls = new VerticalLayout(versionSelector, showPrereleases);
 		versionControls.setMargin(false);
 		versionControls.setPadding(false);
 		versionControls.setSpacing(false);
 		return versionControls;
+	}
+
+	private void setUpdateButtonPrimary(Button updateButton, String installedVersion, String selectedVersion) {
+		if (selectedVersion != null && !Objects.equals(selectedVersion, installedVersion)) {
+			updateButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+		} else {
+			updateButton.removeThemeVariants(ButtonVariant.LUMO_PRIMARY);
+		}
 	}
 
 	private void loadSelectableVersions(App app, boolean showPrereleases, ComboBox<String> versionSelector,
@@ -729,7 +760,11 @@ public class AppsView extends VerticalLayout {
 		List<String> effectiveVersions = !versions.isEmpty() ? versions
 				: (fallbackUsable ? List.of(fallbackVersion) : List.of());
 		versionSelector.setItems(effectiveVersions);
-		versionSelector.setValue(effectiveVersions.isEmpty() ? null : effectiveVersions.get(0));
+		String selectedVersion = showPrereleases
+				? effectiveVersions.stream().filter(version -> version.contains("-")).findFirst().orElse(null)
+				: null;
+		versionSelector.setValue(selectedVersion != null ? selectedVersion
+				: effectiveVersions.isEmpty() ? null : effectiveVersions.get(0));
 	}
 
 	private void preloadStableVersions() {
