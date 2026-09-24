@@ -56,11 +56,11 @@ public class MainView extends VerticalLayout {
 							<li>
 								If you have good Internet at your club, you can run competitions without having to install any software.
 								The minimum is connect a laptop for the announcer.  Then, if you wish, you can add as many additional displays as you need. You
-								can referee manually or using <a style="text-decoration:underline" href="https://owlcms.github.io/owlcms4/#/Refereeing">phones</a>.
+								can referee manually or using <a style="text-decoration:underline" href="https://jflamy.github.io/owlcms4/#/060-Refereeing/010-Refereeing">phones</a>.
 							</li>
 							<li>
 								<a href='./apps'><span style="border:solid; border-width: 1px; padding: 2px;">Login</span></a> and follow these
-								<a style="text-decoration:underline" target="_blank" href="https://owlcms.github.io/owlcms4/#/Fly">instructions</a>
+								<a style="text-decoration:underline" target="_blank" href="https://jflamy.github.io/owlcms4/#/020-RunningInTheCloud/010-Fly">instructions</a>
 							    to create and manage your free applications on the <a style="text-decoration:underline" href="https://fly.io" target="_blank">fly.io</a> cloud.
 							</li>
 						</ul>
@@ -75,7 +75,7 @@ public class MainView extends VerticalLayout {
 		                	<ul>
 		                		<li>
 		                			<a href='./apps'><span style="border:solid; border-width: 1px; padding: 2px;">Login</span></a>
-		                			and follow these <a style="text-decoration:underline" target="_blank" href="https://owlcms.github.io/owlcms4/#/Fly?id=create-publicresults">instructions</a>
+		                			and follow these <a style="text-decoration:underline" target="_blank" href="https://jflamy.github.io/owlcms4/#/070-ScoreboardsAndResults/030-TrackerScoreboards">instructions</a>
 		                			to create a cloud server that will make your competition results available LIVE, with no delays.
 		                			To anyone in the world with internet access, on a phone, tablet, or laptop.
 		                		</li>
@@ -109,11 +109,11 @@ public class MainView extends VerticalLayout {
 		        	<div>
 					    If you are hosting a major competition, we actually recommend that you run it locally
 		        		on a laptop and use your own router to isolate you from an Internet provider outage.
-						See <a style="text-decoration:underline" target="_blank" href="https://owlcms.github.io/owlcms4/#/InstallationOverview?id=stand-alone-laptop-installation">this link</a> for local installation instructions.
+						See <a style="text-decoration:underline" target="_blank" href="https://jflamy.github.io/owlcms4/#/010-RunningLocally/020-LocalDownloads">this link</a> for local installation instructions.
 					</div>
 					<div>
 						Then you can use this site to publish the results. See 
-						<a style="text-decoration:underline" target="_blank" href="https://owlcms.github.io/owlcms4/#/PublicResults">this link</a> for instructions.
+						<a style="text-decoration:underline" target="_blank" href="https://jflamy.github.io/owlcms4/#/070-ScoreboardsAndResults/030-TrackerScoreboards">this link</a> for instructions.
 					</div>
 					<div>
 		        		Running on-site also allows using devices compliant with IWF TCRR rules that you can either
@@ -154,7 +154,7 @@ public class MainView extends VerticalLayout {
 				<div>
 				owlcms is used world-wide to run competitions of all sizes, from club meets to continental 
 				championships with multiple platforms. Have a look at the 
-				<a style="text-decoration: underline" target="_blank" href="https://owlcms.github.io/owlcms4/#/index">full documentation</a>
+				<a style="text-decoration: underline" target="_blank" href="https://jflamy.github.io/owlcms4/#/index">full documentation</a>
 				</div>
 				<div>Go to to the
 				<a style="text-decoration:underline" target="_blank" href="https://groups.google.com/g/owlcms">owlcms users group forum</a> and subscribe
