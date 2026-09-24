@@ -1,3 +1,7 @@
+New in 2.2
+- Home page links updated to the reorganized documentation, including the new Tracker cloud scoreboards instructions.
+- Show prereleases
+
 New in 2.1
 - Postgres database will now be turned off when turning OWLCMS off so no charges are incurred except inexpensive disk space
 - Better user interface highlights for running/stopped status
