@@ -119,7 +119,7 @@ public class MainView extends VerticalLayout {
 		        		Running on-site also allows using devices compliant with IWF TCRR rules that you can either
 		        		build
 		        		(<a style="text-decoration:underline" target="_blank" 
-		        		href="https://github.com/jflamy/owlcms-firmata/blob/main/README.md">see this
+		        		href="https://github.com/owlcms/firmata/blob/main/README.md">see this
 		        		page</a>)
 		        		or buy from suppliers like <a style="text-decoration:underline" target="_blank" 
 		        		href="https://blue-owl.nemikor.com">blue-owl</a>.
