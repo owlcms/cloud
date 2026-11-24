@@ -1,4 +1,4 @@
-## Building
+## opBuilding
 
 The production build and deploy of this application is done using the fly CLI.
 
@@ -19,7 +19,7 @@ For development, the application is like all the other owlcms apps, but must run
   - run `code .` to start VSCode (at the bottom left you should see it is running on WSL)
   - Switch to a Java profile in the gear setting at the bottom
   - You can then start fly-owlcms from the run menu (left pointing triangle in the left hand-side bar)
-  
+
   
 
 ## Getting the container
