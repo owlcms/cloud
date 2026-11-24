@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -11,7 +12,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
+import org.apache.maven.artifact.versioning.ComparableVersion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +30,24 @@ import app.owlcms.fly.ui.LogDialog;
 
 public class FlyCtlCommands {
 	private static final String TRACKER_CONNECTION_SECRET_PREFIX = "OWLCMS_CONNECTION_";
+	private static final String CONTROL_PANEL_VERSION_SECRET = "OWLCMS_CONTROLPANEL";
+	private static final String LEGACY_CONTROL_PANEL_VERSION = "3.1.0";
+	private static final ComparableVersion DOCKERFILE_CONTROL_PANEL_MIN_VERSION =
+			new ComparableVersion("69.0.0-alpha00");
+	private static final String CONTROL_PANEL_TOKEN_SECRET = "OWLCMS_CONTROLPANELTOKEN";
+	/**
+	 * Fly secrets are write-only: the token is also kept in the name of a marker secret, CPTOKEN_&lt;token&gt;, so that
+	 * it can be copied again later. Listing secret names requires the Fly login, as does reading the environment.
+	 */
+	private static final String CONTROL_PANEL_TOKEN_MARKER_PREFIX = "CPTOKEN_";
+	private static final Pattern CONTROL_PANEL_TOKEN_MARKER =
+			Pattern.compile(CONTROL_PANEL_TOKEN_MARKER_PREFIX + "[A-Z0-9]+");
+	// secret names are environment variable names: uppercase letters and digits, without look-alikes
+	private static final String CONTROL_PANEL_TOKEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+	private static final int CONTROL_PANEL_TOKEN_LENGTH = 15;
+	private static final String CP_TOKEN_ENV = "CP_TOKEN";
+	private static final String STALE_CPTOKENS_ENV = "STALE_CPTOKENS";
+	private static final SecureRandom RANDOM = new SecureRandom();
 	int appNameStatus;
 	int hostNameStatus;
 	Logger logger = LoggerFactory.getLogger(FlyCtlCommands.class);
@@ -48,16 +69,125 @@ public class FlyCtlCommands {
 		this.logDialog = logDialog;
 	}
 
+	static boolean usesDockerfileControlPanelVersion(String version) {
+		if (version == null || version.isBlank()) {
+			return false;
+		}
+		String normalized = version.strip();
+		if (normalized.startsWith("v") || normalized.startsWith("V")) {
+			normalized = normalized.substring(1);
+		}
+		if (normalized.isEmpty() || !Character.isDigit(normalized.charAt(0))) {
+			return false;
+		}
+		return new ComparableVersion(normalized).compareTo(DOCKERFILE_CONTROL_PANEL_MIN_VERSION) >= 0;
+	}
+
+	private static String resolveDeploymentVersion(App app) {
+		String deploymentVersion = app.getDeploymentVersion();
+		if (deploymentVersion == null || deploymentVersion.isBlank() || deploymentVersion.equalsIgnoreCase("unknown")) {
+			String fallbackVersion = app.getCurrentVersion();
+			if (fallbackVersion == null || fallbackVersion.isBlank()) {
+				fallbackVersion = "stable";
+			}
+			deploymentVersion = fallbackVersion;
+		}
+		return deploymentVersion;
+	}
+
+	/** @return true for an OWLCMS app whose version reads the control panel token */
+	public boolean supportsControlPanelToken(App app) {
+		return app.appType == AppType.OWLCMS && usesDockerfileControlPanelVersion(app.getCurrentVersion());
+	}
+
+	/** @return the control panel token, or null when the token secret or its single marker is missing */
+	public String getControlPanelToken(App app) {
+		if (!app.hasSecretName(CONTROL_PANEL_TOKEN_SECRET)) {
+			return null;
+		}
+		List<String> markers = controlPanelTokenMarkers(app);
+		if (markers.size() != 1) {
+			return null;
+		}
+		String token = markers.get(0).substring(CONTROL_PANEL_TOKEN_MARKER_PREFIX.length());
+		return token.isEmpty() ? null : token;
+	}
+
+	/**
+	 * Replaces the control panel token. A running OWLCMS restarts to use it; a stopped one gets it at its next start,
+	 * so that OWLCMS is not started while its database is stopped.
+	 */
+	public void regenerateControlPanelToken(App app, Runnable callback) {
+		doAppCommand(app, "set -e\n" + controlPanelTokenCommand(app, app.stopped), callback, null,
+				controlPanelTokenEnv(app));
+	}
+
+	private static String newControlPanelToken() {
+		StringBuilder token = new StringBuilder(CONTROL_PANEL_TOKEN_LENGTH);
+		for (int i = 0; i < CONTROL_PANEL_TOKEN_LENGTH; i++) {
+			token.append(CONTROL_PANEL_TOKEN_ALPHABET.charAt(RANDOM.nextInt(CONTROL_PANEL_TOKEN_ALPHABET.length())));
+		}
+		return token.toString();
+	}
+
+	private static List<String> controlPanelTokenMarkers(App app) {
+		return app.getSecretNames().stream()
+				.filter(name -> name.startsWith(CONTROL_PANEL_TOKEN_MARKER_PREFIX))
+				.sorted()
+				.toList();
+	}
+
+	/** The token and the markers to remove are passed in the environment, never on the logged command line. */
+	private static String[] controlPanelTokenEnv(App app) {
+		return new String[] { CP_TOKEN_ENV, newControlPanelToken(),
+				STALE_CPTOKENS_ENV, String.join(" ", controlPanelTokenMarkers(app)) };
+	}
+
+	private static String controlPanelTokenCommand(App app, boolean stage) {
+		return """
+				if [ -n "$STALE_CPTOKENS" ]; then
+				    fly secrets unset $STALE_CPTOKENS --stage --app %1$s
+				fi
+				printf 'OWLCMS_CONTROLPANELTOKEN=%%s\\nCPTOKEN_%%s=1\\n' "$CP_TOKEN" "$CP_TOKEN" \\
+				    | fly secrets import%2$s --app %1$s
+				""".formatted(app.name, stage ? " --stage" : "");
+	}
+
 	public void appCreate(App app, Runnable callback) {
-		doAppCommand(app, app.appType.create, callback, null);
+		if (app.appType != AppType.OWLCMS) {
+			doAppCommand(app, app.appType.create, callback, null);
+		} else if (usesDockerfileControlPanelVersion(resolveDeploymentVersion(app))) {
+			doAppCommand(app, app.appType.create, callback, null, CP_TOKEN_ENV, newControlPanelToken());
+		} else {
+			doAppCommand(app, app.appType.create, callback, null,
+					"OWLCMS_CONTROLPANEL_SECRET", LEGACY_CONTROL_PANEL_VERSION);
+		}
 	}
 
 	public void appDeploy(App app, App database, Runnable callback) {
-		String deploymentVersion = app.getDeploymentVersion();
+		String deploymentVersion = resolveDeploymentVersion(app);
 		String configTemplate = shellQuote(app.appType.getConfigFile());
 		String stopBeforeDeploy = app.appType == AppType.OWLCMS
 				? "fly scale count 0 --yes --app " + app.name
 				: "";
+		// 69.0.0-alpha00+ sets OWLCMS_CONTROLPANEL in the Docker image; older images need the 3.1.0 secret.
+		String controlPanelSecretCommand = "";
+		String[] envPairs = new String[0];
+		if (app.appType == AppType.OWLCMS) {
+			if (usesDockerfileControlPanelVersion(deploymentVersion)) {
+				if (app.hasSecretName(CONTROL_PANEL_VERSION_SECRET)) {
+					controlPanelSecretCommand = "fly secrets unset " + CONTROL_PANEL_VERSION_SECRET
+							+ " --stage --app " + app.name + "\n";
+				}
+				if (getControlPanelToken(app) == null) {
+					controlPanelSecretCommand += controlPanelTokenCommand(app, true);
+					envPairs = controlPanelTokenEnv(app);
+				}
+			} else if (!app.hasSecretName(CONTROL_PANEL_VERSION_SECRET)) {
+				controlPanelSecretCommand = "fly secrets set " + CONTROL_PANEL_VERSION_SECRET + "="
+						+ LEGACY_CONTROL_PANEL_VERSION + " --stage --app " + app.name;
+			}
+		}
 		String deployOptions = app.appType == AppType.OWLCMS ? "--ha=false --update-only" : "--ha=false";
 		String scaleAfterDeploy = app.appType == AppType.OWLCMS
 				? "fly scale count 0 --yes --app " + app.name
@@ -65,14 +195,15 @@ public class FlyCtlCommands {
 		String command = """
 				set -e
 				%1$s
+				%2$s
 				config_file=$(mktemp)
 				trap 'rm -f "$config_file"' EXIT
-				envsubst < %2$s > "$config_file"
-				fly deploy --app %3$s --image %4$s:%5$s %6$s --config "$config_file"
-				%7$s
-				""".formatted(stopBeforeDeploy, configTemplate, app.name, app.appType.image, deploymentVersion,
-				deployOptions, scaleAfterDeploy);
-		doAppCommand(app, command, callback, null);
+				envsubst < %3$s > "$config_file"
+				fly deploy --app %4$s --image %5$s:%6$s %7$s --config "$config_file"
+				%8$s
+				""".formatted(stopBeforeDeploy, controlPanelSecretCommand, configTemplate, app.name, app.appType.image,
+				deploymentVersion, deployOptions, scaleAfterDeploy);
+		doAppCommand(app, command, callback, null, envPairs);
 	}
 
 	public void appDestroy(App app, Runnable callback) {
@@ -758,40 +889,39 @@ public class FlyCtlCommands {
 			ProcessBuilder builder = createProcessBuilder(getToken());
 
 			// these can be overridden by the env pairs
-			String deploymentVersion = app.getDeploymentVersion();
-			if (deploymentVersion == null || deploymentVersion.isBlank() || deploymentVersion.equalsIgnoreCase("unknown")) {
-				String fallbackVersion = app.getCurrentVersion();
-				if (fallbackVersion == null || fallbackVersion.isBlank()) {
-					fallbackVersion = "stable";
-				}
-				deploymentVersion = fallbackVersion;
-			}
-			builder.environment().put("VERSION", deploymentVersion);
+			builder.environment().put("VERSION", resolveDeploymentVersion(app));
 			if (app.regionCode != null && !app.regionCode.isBlank()) {
 				builder.environment().put("REGION", app.regionCode);
 			}
 			builder.environment().put("FLY_APP", app.name);
 
+			String controlPanelToken = null;
 			if (envPairs.length > 0) {
 				for (int i = 0; i < envPairs.length; i = i + 2) {
 					builder.environment().put(envPairs[i], envPairs[i + 1]);
-					logger.debug("adding {}={}", envPairs[i], envPairs[i + 1]);
+					logger.debug("adding {}", envPairs[i]);
+					if (CP_TOKEN_ENV.equals(envPairs[i])) {
+						controlPanelToken = envPairs[i + 1];
+					}
 				}
 			}
+			String hiddenToken = controlPanelToken;
 
 			try {
 				Consumer<String> outputConsumer = (string) -> {
+					String shown = hideControlPanelToken(string, hiddenToken);
 					if (logDialog != null) {
-						logDialog.append(string, ui);
+						logDialog.append(shown, ui);
 					} else if (execArea != null) {
-						execArea.append(string, ui);
+						execArea.append(shown, ui);
 					}
 				};
 				Consumer<String> errorConsumer = (string) -> {
+					String shown = hideControlPanelToken(string, hiddenToken);
 					if (logDialog != null) {
-						logDialog.appendError(string, ui);
+						logDialog.appendError(shown, ui);
 					} else if (execArea != null) {
-						execArea.appendError(string, ui);
+						execArea.appendError(shown, ui);
 					}
 				};
 				runCommand("**** running command {}", commandString, outputConsumer, errorConsumer, builder,
@@ -805,6 +935,15 @@ public class FlyCtlCommands {
 				e.printStackTrace();
 			}
 		}).start();
+	}
+
+	private static String hideControlPanelToken(String line, String token) {
+		if (line == null) {
+			return null;
+		}
+		String hidden = CONTROL_PANEL_TOKEN_MARKER.matcher(line)
+				.replaceAll(CONTROL_PANEL_TOKEN_MARKER_PREFIX + "(hidden)");
+		return token == null || token.isEmpty() ? hidden : hidden.replace(token, "(hidden)");
 	}
 
 	private synchronized List<String> getAppNames(ProcessBuilder builder, UI ui)

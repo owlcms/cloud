@@ -1,3 +1,7 @@
+New in 2.3
+- OWLCMS 69 and later: the control panel version comes from the OWLCMS image; the cloud no longer overrides it.
+- OWLCMS 69 and later: each OWLCMS app gets a control panel token, needed for priviledged actions that expect the operator to have access to the cloud console. Copy it with the copy icon; Generate/Regenerate replaces it.
+
 New in 2.2
 - Home page links updated to the reorganized documentation, including the new Tracker cloud scoreboards instructions.
 - Show prereleases

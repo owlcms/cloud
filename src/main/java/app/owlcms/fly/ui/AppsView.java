@@ -23,6 +23,7 @@ import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Hr;
 import com.vaadin.flow.component.html.NativeLabel;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.Notification.Position;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -552,6 +553,9 @@ public class AppsView extends VerticalLayout {
 		deploymentControls.setPadding(false);
 		deploymentControls.setAlignItems(Alignment.END);
 		rightControls.add(deploymentControls);
+		if (flyCommands.supportsControlPanelToken(app)) {
+			rightControls.add(showControlPanelTokenControls(app, ui));
+		}
 		if (app.appType == AppType.TRACKER) {
 			rightControls.add(showTrackerKeyControls(app, appList));
 		}
@@ -666,6 +670,52 @@ public class AppsView extends VerticalLayout {
 		updateConnectionActions.run();
 		keyControls.add(owlcmsSelector, sharedKeyField, generateKeyButton, keyButton, disconnectButton);
 		return keyControls;
+	}
+
+	private HorizontalLayout showControlPanelTokenControls(App owlcms, UI ui) {
+		HorizontalLayout tokenControls = new HorizontalLayout();
+		tokenControls.setAlignItems(Alignment.CENTER);
+		tokenControls.setPadding(false);
+		tokenControls.setMargin(false);
+		tokenControls.getStyle().set("margin-top", "0.5em");
+
+		String token = flyCommands.getControlPanelToken(owlcms);
+		tokenControls.add(new NativeLabel(token == null ? "No control panel token" : "Control panel token"));
+		if (token != null) {
+			tokenControls.add(copyTokenButton(token));
+		}
+		Button generateButton = new Button(token == null ? "Generate Token" : "Regenerate Token", event -> {
+			ConfirmDialog confirmation = new ConfirmDialog();
+			confirmation.setHeader(token == null ? "Generate the control panel token?" : "Replace the control panel token?");
+			String effect = owlcms.stopped
+					? "The token takes effect when " + owlcms.name + " is next started."
+					: owlcms.name + " will restart to use the token.";
+			confirmation.setText(token == null ? effect : effect + " The current token will stop working.");
+			confirmation.setConfirmText(token == null ? "Generate" : "Regenerate");
+			confirmation.setCancelText("Cancel");
+			confirmation.setCancelable(true);
+			confirmation.addConfirmListener(confirm -> flyCommands.regenerateControlPanelToken(owlcms,
+					() -> doSilentListRefresh(apps, ui)));
+			confirmation.open();
+		});
+		tokenControls.add(generateButton);
+		return tokenControls;
+	}
+
+	/**
+	 * Copies the token in the browser, within the click itself: the clipboard API is only available to a user gesture.
+	 * The token is kept in the click handler, never in the page text or attributes.
+	 */
+	private Button copyTokenButton(String token) {
+		Button copy = new Button(VaadinIcon.COPY_O.create());
+		copy.addThemeVariants(ButtonVariant.LUMO_TERTIARY_INLINE, ButtonVariant.LUMO_ICON);
+		copy.setTooltipText("Copy the control panel token");
+		copy.setAriaLabel("Copy the control panel token");
+		copy.getElement().executeJs("""
+				const token = $0;
+				this.addEventListener('click', () => navigator.clipboard.writeText(token));""", token);
+		copy.addClickListener(event -> Notification.show("Control panel token copied", 2000, Position.TOP_END));
+		return copy;
 	}
 
 	private void showApplications(VerticalLayout apps, List<App> appList, AppType appType) {

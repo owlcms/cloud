@@ -24,11 +24,23 @@ flyctl launch --ha=false --config $tmpfile --no-deploy
 
 # we do not use flyctl postgres attach because it is unreliable.
 # for our purposes the default cluster database is fine.
-flyctl secrets set \
-  DATABASE_URL=${connection_string}/postgres?sslmode=disable \
-  OWLCMS_CONTROLPANEL=3.1.0 \
-  container=fly \
-  --app ${FLY_APP}
+secrets=(
+  "DATABASE_URL=${connection_string}/postgres?sslmode=disable"
+  "container=fly"
+)
+if [ -n "${OWLCMS_CONTROLPANEL_SECRET:-}" ]; then
+  secrets+=("OWLCMS_CONTROLPANEL=${OWLCMS_CONTROLPANEL_SECRET}")
+fi
+flyctl secrets set "${secrets[@]}" --app "${FLY_APP}"
+
+# control panel token (OWLCMS 69+): the value, and a marker whose name lets the cloud app copy it again later.
+# Tracing is off so that the token is not printed.
+{ set +x; } 2>/dev/null
+if [ -n "${CP_TOKEN:-}" ]; then
+  printf 'OWLCMS_CONTROLPANELTOKEN=%s\nCPTOKEN_%s=1\n' "$CP_TOKEN" "$CP_TOKEN" \
+    | flyctl secrets import --stage --app "${FLY_APP}"
+fi
+set -x
 
 # now that we have the secrets, launch
 flyctl deploy --ha=false --config $tmpfile
